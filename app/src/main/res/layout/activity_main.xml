@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <!-- ツールバー -->
+    <androidx.appcompat.widget.Toolbar
+        android:id="@+id/toolbar"
+        android:layout_width="0dp"
+        android:layout_height="?attr/actionBarSize"
+        android:background="@android:color/black"
+        app:title="Sekoiline"
+        app:titleTextColor="@android:color/white"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- ステータスバー：時間・スピード・距離 -->
+    <TextView
+        android:id="@+id/statusText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:text="TIME: 30.0   SPEED: 120km/h   DIST: 00000"
+        android:textColor="#00FF00"
+        android:padding="8dp"
+        android:textSize="16sp"
+        android:typeface="monospace"
+        app:layout_constraintTop_toBottomOf="@id/toolbar"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"/>
+
+    <!-- 擬似3D描画エリア -->
+    <tk.horiuchi.sekoiline.GameView
+        android:id="@+id/gameView"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        app:layout_constraintTop_toBottomOf="@id/statusText"
+        app:layout_constraintBottom_toTopOf="@id/buttonLayout"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        android:layout_marginTop="8dp"
+        app:layout_constraintDimensionRatio="1:1"
+        android:focusable="false"
+        android:focusableInTouchMode="false"
+        android:clickable="false" />
+
+
+    <!-- 操作ボタン -->
+    <LinearLayout
+        android:id="@+id/buttonLayout"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:layout_marginBottom="8dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <ImageButton android:id="@+id/btn_accel" android:layout_width="64dp" android:layout_height="64dp" android:layout_margin="8dp" android:background="@drawable/btn_accel" android:focusable="false" android:focusableInTouchMode="false" />
+        <ImageButton android:id="@+id/btn_brake" android:layout_width="64dp" android:layout_height="64dp" android:layout_margin="8dp" android:background="@drawable/btn_brake" android:focusable="false" android:focusableInTouchMode="false" />
+        <ImageButton android:id="@+id/btn_left" android:layout_width="64dp" android:layout_height="64dp" android:layout_margin="8dp" android:background="@drawable/btn_left" android:focusable="false" android:focusableInTouchMode="false" />
+        <ImageButton android:id="@+id/btn_right" android:layout_width="64dp" android:layout_height="64dp" android:layout_margin="8dp" android:background="@drawable/btn_right" android:focusable="false" android:focusableInTouchMode="false" />
+    </LinearLayout>
+
+</androidx.constraintlayout.widget.ConstraintLayout>
