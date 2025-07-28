@@ -36,6 +36,9 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
     private var roadShift = 0f
     private var targetSteering = 0f
 
+    private var roadScrollOffset = 0f
+
+
 
     init {
         //Log.w("GameView", "init")
@@ -94,16 +97,44 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         maxShift = w * 0.3f
     }
 
+    private val roadTestMode = false
+    private var param1 = 30f
+    private var param2 = 5f
     private var lastBackgroundResId: Int = -1  // 直前の背景IDを保持
     private fun update() {
+        if (roadTestMode) {
+            // 単純にスクロールだけ進める
+            val lineSpacing = height / param1
+            val scrollSpeed = param2  // 固定値で見やすく
+            roadScrollOffset += scrollSpeed
+            roadScrollOffset %= lineSpacing
+            Log.d("GameView-test", "scrollSpeed=$scrollSpeed lineSpacing=$lineSpacing param=$param1")
+            return  // 他のロジックはスキップ
+        }
         distance += speed / 60
         time -= 1f / 60f
         if (time <= 0f) time = 0f
 
 
         val segment = courseManager.getCurrentSegment(distance)
-        currentCurve = segment.curve
+        // 現在のセグメントのカーブ値を取得（ターゲット値）
+        val targetCurve = segment.curve
+        // 緩和係数（0.0〜1.0、小さいほど滑らか）
+        val smoothingFactor = 0.05f
+        // 緩やかにcurrentCurveを追従させる
+        currentCurve += (targetCurve - currentCurve) * smoothingFactor
+        // 小さな値はゼロとみなす
+        if (kotlin.math.abs(currentCurve) < 0.01f) {
+            currentCurve = 0f
+        }
         //Log.d("GameView", "distance = $distance, segment = $segment")
+
+        // スクロール速度 = speed に比例（適宜調整）
+        //val scrollSpeed = speed / param2  // 小さくするとゆっくり
+        val scrollSpeed = param2  // 小さくするとゆっくり
+        roadScrollOffset += scrollSpeed
+        val lineSpacing = height / param1  // drawRoad でも同じ spacing を使用している前提
+        roadScrollOffset %= lineSpacing
 
         // ★ 背景画像を必要に応じて更新
         if (segment.background != lastBackgroundResId) {
@@ -139,15 +170,23 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         drawRoad(canvas)
 
         val bitmap = carBitmaps[steeringState] ?: return
+        val scale = 1.5f  // ここでサイズ倍率を指定（1.0 = 等倍）
+
+        val scaledWidth = (bitmap.width * scale).toInt()
+        val scaledHeight = (bitmap.height * scale).toInt()
+
+        val scaledBitmap = Bitmap.createScaledBitmap(bitmap, scaledWidth, scaledHeight, false)
+
         val centerX = width / 2
-        val bottomY = height - 100
-        val left = centerX - bitmap.width / 2
-        val top = bottomY - bitmap.height
-        canvas.drawBitmap(bitmap, left.toFloat(), top.toFloat(), null)
+        val bottomY = height - 20
+        val left = centerX - scaledBitmap.width / 2
+        val top = bottomY - scaledBitmap.height
+
+        canvas.drawBitmap(scaledBitmap, left.toFloat(), top.toFloat(), null)
     }
 
     private fun drawBackground(canvas: Canvas) {
-        val bgHeight = height / 3
+        val bgHeight = height - height / 2
         val bmpW = backgroundBitmap.width
         val bmpH = backgroundBitmap.height
         val scrollX = ((bgScrollX % bmpW) + bmpW) % bmpW
@@ -177,15 +216,21 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
 
     private fun drawRoad(canvas: Canvas) {
         val baseCenterX = width / 2f + roadShift
-        val roadHeight = height / 2f
-        val numLines = 30
-        val lineSpacing = roadHeight / numLines
+        //val roadBottomY = height * 0.9f // 画面下部を描画基準にする（固定）
+        val roadBottomY = height.toFloat()
+        //val numLines = 30
+        //val lineSpacing = height / 60f
+        val lineSpacing = height / param1
+        val numLines = (height / lineSpacing / 2).toInt()
 
         for (i in 0 until numLines) {
             val t = i / numLines.toFloat()
-            val baseY = height - i * lineSpacing
-            val roadWidth = lerp(width * 0.9f, width * 0.2f, t)
+            //val baseY = roadBottomY - i * lineSpacing // ← roadScrollOffset を使わない
+            val baseY = roadBottomY - i * lineSpacing + (roadScrollOffset % lineSpacing)
+            // フチ用の固定Y座標（スクロールしない）
+            val fixedY = height - i * lineSpacing
 
+            val roadWidth = lerp(width * 0.9f, width * 0.2f, t)
             val curveAmount = currentCurve * (t.pow(2)) * maxShift * 0.5f
 
             val left = baseCenterX - roadWidth / 2 + curveAmount
@@ -193,18 +238,30 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
             val mid = (left + right) / 2
 
             canvas.drawLine(left, baseY, right, baseY, roadPaint)
+
             val scale = 1f + (1f - t) * 1.5f
             val lineLength = 6f * scale
+            //val lineLength = lerp(30f, 4f, t)
 
-            if (i % 2 == 0) canvas.drawLine(mid, baseY, mid, baseY + lineLength, centerLinePaint)
-            canvas.drawLine(left + 2, baseY, left + 2, baseY + lineLength, edgeLinePaint)
-            canvas.drawLine(right - 2, baseY, right - 2, baseY + lineLength, edgeLinePaint)
+            val centerLineLength = lerp(20f, 4f, t)  // 可変（動きを出す）
+            val edgeLineLength = 14f                 // 固定（動かない）
+
+            //if (i % 2 == 0) {
+                //canvas.drawLine(mid, baseY, mid, baseY + lineLength, centerLinePaint)
+                canvas.drawLine(mid, baseY, mid, baseY + centerLineLength, centerLinePaint)
+            //}
+            //canvas.drawLine(left + 2, baseY, left + 2, baseY + lineLength, edgeLinePaint)
+            //canvas.drawLine(right - 2, baseY, right - 2, baseY + lineLength, edgeLinePaint)
+            // フチ（動かさない）
+            canvas.drawLine(left + 2, fixedY, left + 2, fixedY + edgeLineLength, edgeLinePaint)
+            canvas.drawLine(right - 2, fixedY, right - 2, fixedY + edgeLineLength, edgeLinePaint)
         }
     }
 
-    private val roadPaint = Paint().apply { color = Color.GRAY; strokeWidth = 2f }
-    private val centerLinePaint = Paint().apply { color = Color.YELLOW; strokeWidth = 6f; isAntiAlias = false }
-    private val edgeLinePaint = Paint().apply { color = Color.WHITE; strokeWidth = 2f; isAntiAlias = false }
+
+    private val roadPaint = Paint().apply { color = Color.DKGRAY; strokeWidth = 10f }
+    private val centerLinePaint = Paint().apply { color = Color.YELLOW; strokeWidth = 30f; isAntiAlias = false }
+    private val edgeLinePaint = Paint().apply { color = Color.LTGRAY; strokeWidth = 30f; isAntiAlias = false }
 
     private fun lerp(start: Float, end: Float, t: Float): Float {
         return start + (end - start) * t
@@ -220,16 +277,6 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         }
     }
 
-    fun onButtonPressedX(input: GameInput) {
-        Log.w("GameView", "onButtonPressed: $input")
-        when (input) {
-            GameInput.LEFT -> targetSteering = -1f
-            GameInput.RIGHT -> targetSteering = 1f
-            GameInput.ACCELERATE -> speed = minOf(speed + 10, 240)
-            GameInput.BRAKE -> speed = maxOf(speed - 10, 0)
-        }
-    }
-
     fun onButtonPressed(input: GameInput) {
         when (input) {
             GameInput.LEFT -> {
@@ -240,6 +287,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                     SteeringState.LEFT1 -> SteeringState.LEFT2
                     else -> SteeringState.LEFT2
                 }
+                param2++
             }
 
             GameInput.RIGHT -> {
@@ -250,10 +298,17 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                     SteeringState.RIGHT1 -> SteeringState.RIGHT2
                     else -> SteeringState.RIGHT2
                 }
+                param2--
             }
 
-            GameInput.ACCELERATE -> speed = minOf(speed + 10, 240)
-            GameInput.BRAKE -> speed = maxOf(speed - 10, 0)
+            GameInput.ACCELERATE -> {
+                speed = minOf(speed + 10, 240)
+                param1++
+            }
+            GameInput.BRAKE -> {
+                speed = maxOf(speed - 10, 0)
+                param1--
+            }
         }
     }
 

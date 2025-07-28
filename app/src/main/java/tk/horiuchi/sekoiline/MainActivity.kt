@@ -72,6 +72,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /*
     private fun setupSteeringButton(id: Int, input: GameInput) {
         val btn = findViewById<ImageButton>(id)
         if (btn == null) {
@@ -87,6 +88,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+     */
 
     private fun hideSystemUI() {
         // フルスクリーン化

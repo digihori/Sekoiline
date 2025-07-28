@@ -13,7 +13,7 @@ class CourseManager {
     init {
         // 仮のコース構成（田舎→都会→夜）
         addSegment(500, 0f, R.drawable.bg_country)   // 直線
-        addSegment(400,  1.9f, R.drawable.bg_country) // 緩い右カーブ
+        addSegment(400,  1.8f, R.drawable.bg_country) // 緩い右カーブ
         addSegment(300, -2.0f, R.drawable.bg_country) // 急な左カーブ
 
         addSegment(500, 0f, R.drawable.bg_city)      // 都会 直線
