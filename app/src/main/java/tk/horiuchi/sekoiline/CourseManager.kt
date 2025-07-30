@@ -3,7 +3,7 @@ package tk.horiuchi.sekoiline
 data class CourseSegment(
     val length: Int,         // セグメントの長さ（単位：距離）
     val curve: Float,        // カーブの強さ（-1.0 = 左カーブ、0 = 直線、1.0 = 右カーブ）
-    val background: Int      // 背景画像のリソースID（例：R.drawable.bg_country）
+    val background: Int?      // 背景画像のリソースID（例：R.drawable.bg_country）
 )
 
 class CourseManager {
@@ -12,20 +12,26 @@ class CourseManager {
 
     init {
         // 仮のコース構成（田舎→都会→夜）
-        addSegment(500, 0f, R.drawable.bg_country)   // 直線
+        addSegment(400, 0f, R.drawable.bg_country)   // 直線
         addSegment(400,  1.8f, R.drawable.bg_country) // 緩い右カーブ
         addSegment(300, -2.0f, R.drawable.bg_country) // 急な左カーブ
 
-        addSegment(500, 0f, R.drawable.bg_city)      // 都会 直線
+        addSegment(300, 0f, null)      // トンネル
+
+        addSegment(400, 0f, R.drawable.bg_city)      // 都会 直線
         addSegment(200,  1.0f, R.drawable.bg_city)    // 急な右カーブ
         addSegment(200, -0.3f, R.drawable.bg_city)    // 緩い左カーブ
 
-        addSegment(600, 0f, R.drawable.bg_city_night)     // 夜
+        addSegment(300, 0f, null)      // トンネル
+
+        addSegment(400, 0f, R.drawable.bg_city_night)     // 夜
         addSegment(200,  0.7f, R.drawable.bg_city_night)
         addSegment(300,  0f, R.drawable.bg_city_night)
+
+        addSegment(300, 0f, null)      // トンネル
     }
 
-    private fun addSegment(length: Int, curve: Float, background: Int) {
+    private fun addSegment(length: Int, curve: Float, background: Int?) {
         segments.add(CourseSegment(length, curve, background))
         totalLength += length
     }
@@ -43,4 +49,8 @@ class CourseManager {
         return segments.last()  // 通常到達しないが保険
     }
 
+    // 現在トンネルかどうか（呼び出し元で distance を渡す）
+    fun isInTunnel(distance: Int): Boolean {
+        return getCurrentSegment(distance).background == null
+    }
 }

@@ -72,24 +72,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /*
-    private fun setupSteeringButton(id: Int, input: GameInput) {
-        val btn = findViewById<ImageButton>(id)
-        if (btn == null) {
-            Log.e("GameView", "Steering Button ID not found: $id")
-            return
-        }
-        btn.setOnTouchListener { _, event ->
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> gameView.onButtonPressed(input)
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> gameView.onButtonReleased()
-            }
-            true
-        }
-    }
-
-     */
-
     private fun hideSystemUI() {
         // フルスクリーン化
         window.decorView.post {

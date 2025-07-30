@@ -18,7 +18,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
     private val drawThread = GameThread()
     private var statusUpdateListener: ((String) -> Unit)? = null
     private lateinit var carBitmaps: Map<SteeringState, Bitmap>
-    private var backgroundBitmap: Bitmap
+    private var backgroundBitmap: Bitmap? = null
     private var bgScrollX = 0f
 
     private var time = 30.0f
@@ -54,7 +54,9 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
             SteeringState.RIGHT2 to BitmapFactory.decodeResource(resources, R.drawable.car_right2),
         )
         val initialSegment = courseManager.getCurrentSegment(0)
-        backgroundBitmap = BitmapFactory.decodeResource(resources, initialSegment.background)
+        backgroundBitmap = initialSegment.background?.let {
+            BitmapFactory.decodeResource(resources, it)
+        }
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) {
@@ -97,6 +99,16 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         maxShift = w * 0.3f
     }
 
+    enum class TunnelState {
+        NONE,               // 通常走行中
+        ENTER_FADE_OUT,     // トンネル突入フェードアウト開始
+        IN_TUNNEL,          // フェードアウト後、完全にトンネル内
+        EXIT_FADE_IN,       // トンネル脱出フェードイン中
+        DONE                // フェード完了（次セグメントに遷移済み）
+    }
+    private var tunnelState = TunnelState.NONE
+    private var tunnelFadeProgress = 0f // 0.0 ～ 1.0 の間でフェード制御
+
     private val roadTestMode = false
     private var param1 = 30f
     private var param2 = 5f
@@ -108,7 +120,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
             val scrollSpeed = param2  // 固定値で見やすく
             roadScrollOffset += scrollSpeed
             roadScrollOffset %= lineSpacing
-            Log.d("GameView-test", "scrollSpeed=$scrollSpeed lineSpacing=$lineSpacing param=$param1")
+            //Log.d("GameView-test", "scrollSpeed=$scrollSpeed lineSpacing=$lineSpacing param=$param1")
             return  // 他のロジックはスキップ
         }
         distance += speed / 60
@@ -137,16 +149,20 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         roadScrollOffset %= lineSpacing
 
         // ★ 背景画像を必要に応じて更新
-        if (segment.background != lastBackgroundResId) {
-            backgroundBitmap = BitmapFactory.decodeResource(resources, segment.background)
-            lastBackgroundResId = segment.background
+        val bgResId = segment.background
+        if (bgResId != null && bgResId != lastBackgroundResId) {
+            Log.d("TunnelDebug", "背景切替: last=$lastBackgroundResId → new=$bgResId at distance=$distance")
+            backgroundBitmap = BitmapFactory.decodeResource(resources, bgResId)
+            lastBackgroundResId = bgResId
         }
 
         // 背景のスクロール速度も、コースカーブとステアリングの差に応じて変化
         bgScrollSpeed = currentCurve * oversteerFactor * 5f
         bgScrollX += bgScrollSpeed
-        if (bgScrollX < 0) bgScrollX += backgroundBitmap.width
-        if (bgScrollX >= backgroundBitmap.width) bgScrollX -= backgroundBitmap.width
+        backgroundBitmap?.let {
+            if (bgScrollX < 0) bgScrollX += it.width
+            if (bgScrollX >= it.width) bgScrollX -= it.width
+        }
 
 
         roadShift += (currentCurve * oversteerFactor - steeringInput) * 2f
@@ -160,6 +176,50 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
             SteeringState.RIGHT2 -> 4.0f
         }
         updateSteeringInput()
+
+        val isCurrentlyTunnel = courseManager.isInTunnel(distance)  // ← CourseManager に実装予定
+
+        //Log.d("TunnelDebug", "update: tunnelState=$tunnelState fadeProgress=$tunnelFadeProgress dist=$distance")
+        when (tunnelState) {
+            TunnelState.NONE -> {
+                if (isCurrentlyTunnel) {
+                    tunnelState = TunnelState.ENTER_FADE_OUT
+                    tunnelFadeProgress = 0f
+                    //Log.d("TunnelState", "状態遷移: NONE → ENTER_FADE_OUT")
+                }
+            }
+
+            TunnelState.ENTER_FADE_OUT -> {
+                tunnelFadeProgress += 0.02f
+                Log.d("TunnelDebug", "ENTER_FADE_OUT進行: fadeProgress=$tunnelFadeProgress")
+                if (tunnelFadeProgress >= 1.0f) {
+                    tunnelState = TunnelState.IN_TUNNEL
+                    //Log.d("TunnelState", "状態遷移: ENTER_FADE_OUT → IN_TUNNEL")
+                }
+            }
+
+            TunnelState.IN_TUNNEL -> {
+                if (!isCurrentlyTunnel) {
+                    tunnelState = TunnelState.EXIT_FADE_IN
+                    tunnelFadeProgress = 0f
+                    //Log.d("TunnelState", "状態遷移: IN_TUNNEL → EXIT_FADE_IN")
+                }
+            }
+
+            TunnelState.EXIT_FADE_IN -> {
+                tunnelFadeProgress += 0.02f
+                if (tunnelFadeProgress >= 1.0f) {
+                    tunnelState = TunnelState.DONE
+                    //Log.d("TunnelState", "状態遷移: EXIT_FADE_IN → DONE")
+                }
+            }
+
+            TunnelState.DONE -> {
+                tunnelState = TunnelState.NONE
+                //Log.d("TunnelState", "状態遷移: DONE → NONE")
+            }
+        }
+        invalidate()
 
         statusUpdateListener?.invoke("TIME: %.1f   SPEED: ${speed}km/h   DIST: %05d".format(time, distance))
     }
@@ -186,27 +246,75 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
     }
 
     private fun drawBackground(canvas: Canvas) {
-        val bgHeight = height - height / 2
-        val bmpW = backgroundBitmap.width
-        val bmpH = backgroundBitmap.height
-        val scrollX = ((bgScrollX % bmpW) + bmpW) % bmpW
-        val intScrollX = scrollX.toInt()
+        //Log.d("TunnelDebug", "drawBackground() called. tunnelState=$tunnelState")
+        //Log.d("TunnelDraw", "drawBackground called: tunnelState=$tunnelState fadeProgress=$tunnelFadeProgress")
 
-        var drawX = 0
-        var srcX = intScrollX
+        if (tunnelState != TunnelState.IN_TUNNEL) {
+            backgroundBitmap?.let { bitmap ->
+                //Log.d("TunnelFade", "Background bitmap is set: width=${bitmap.width}, height=${bitmap.height}")
+                val bgHeight = height - height / 2
+                val bmpW = bitmap.width
+                val bmpH = bitmap.height
+                val scrollX = ((bgScrollX % bmpW) + bmpW) % bmpW
+                val intScrollX = scrollX.toInt()
 
-        while (drawX < width) {
-            val remainingSrc = bmpW - srcX
-            val drawWidth = minOf(remainingSrc, width - drawX)
+                var drawX = 0
+                var srcX = intScrollX
 
-            val src = Rect(srcX, 0, srcX + drawWidth, bmpH)
-            val dst = Rect(drawX, 0, drawX + drawWidth, bgHeight)
+                while (drawX < width) {
+                    val remainingSrc = bmpW - srcX
+                    val drawWidth = minOf(remainingSrc, width - drawX)
 
-            canvas.drawBitmap(backgroundBitmap, src, dst, paint)
+                    val src = Rect(srcX, 0, srcX + drawWidth, bmpH)
+                    val dst = Rect(drawX, 0, drawX + drawWidth, bgHeight)
 
-            drawX += drawWidth
-            srcX = 0
+                    val bgPaint = Paint().apply {
+                        alpha = 255  // 完全に不透明にしておく
+                    }
+                    //Log.d("TunnelDraw", "背景描画実行: bgScrollX=$bgScrollX")
+                    canvas.drawBitmap(bitmap, src, dst, bgPaint)
+
+                    drawX += drawWidth
+                    srcX = 0
+                }
+            } ?: run {
+                // ここは保険
+                //Log.d("TunnelFade", "Background bitmap is NULL at progress=$tunnelFadeProgress")
+                //Log.d("TunnelDraw", "黒塗り実行(保険): alpha=$alpha (state=$tunnelState)")
+                paint.color = Color.BLACK
+                canvas.drawRect(0f, 0f, width.toFloat(), (height / 2).toFloat(), paint)
+            }
         }
+        // フェード演出またはトンネル内の黒塗り
+        if (tunnelState == TunnelState.ENTER_FADE_OUT ||
+            tunnelState == TunnelState.EXIT_FADE_IN ||
+            tunnelState == TunnelState.IN_TUNNEL) {
+
+            val alpha = when (tunnelState) {
+                TunnelState.ENTER_FADE_OUT -> {
+                    val a = (tunnelFadeProgress * 255).toInt().coerceIn(0, 255)
+                    Log.d("TunnelFade", "ENTER_FADE_OUT: progress=$tunnelFadeProgress alpha=$a bgResId=$lastBackgroundResId")
+                    a
+                }
+                TunnelState.EXIT_FADE_IN   -> {
+                    val a = ((1.0f - tunnelFadeProgress) * 255).toInt().coerceIn(0, 255)
+                    //val a = (tunnelFadeProgress * 255).toInt().coerceIn(0, 255)
+                    Log.d("TunnelFade", "EXIT_FADE_IN: progress=$tunnelFadeProgress alpha=$a bgResId=$lastBackgroundResId")
+                    a
+                }
+                TunnelState.IN_TUNNEL      -> {
+                    Log.d("TunnelFade", "IN_TUNNEL: alpha=255 bgResId=$lastBackgroundResId")
+                    255
+                } // 完全に黒で塗りつぶす
+                else -> 0
+            }
+
+            //Log.d("TunnelDraw", "黒塗り実行: alpha=$alpha (state=$tunnelState)")
+            paint.color = Color.argb(alpha, 0, 0, 0)
+            //Log.d("TunnelFade", "BLACK!: alpha=$alpha")
+            canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
+        }
+
     }
 
     private val paint = Paint().apply {
@@ -215,17 +323,23 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
     }
 
     private fun drawRoad(canvas: Canvas) {
+        if (tunnelState == TunnelState.IN_TUNNEL /*|| tunnelState == TunnelState.EXIT_FADE_IN*/) {
+            roadPaint.color = Color.rgb(40, 40, 40) // 暗いグレー
+            centerLinePaint.color = Color.rgb(100, 100, 0) // 暗い黄色
+            edgeLinePaint.color = Color.DKGRAY // 薄暗いグレー
+        } else {
+            roadPaint.color = Color.DKGRAY
+            centerLinePaint.color = Color.YELLOW
+            edgeLinePaint.color = Color.LTGRAY
+        }
+
         val baseCenterX = width / 2f + roadShift
-        //val roadBottomY = height * 0.9f // 画面下部を描画基準にする（固定）
         val roadBottomY = height.toFloat()
-        //val numLines = 30
-        //val lineSpacing = height / 60f
         val lineSpacing = height / param1
         val numLines = (height / lineSpacing / 2).toInt()
 
         for (i in 0 until numLines) {
             val t = i / numLines.toFloat()
-            //val baseY = roadBottomY - i * lineSpacing // ← roadScrollOffset を使わない
             val baseY = roadBottomY - i * lineSpacing + (roadScrollOffset % lineSpacing)
             // フチ用の固定Y座標（スクロールしない）
             val fixedY = height - i * lineSpacing
@@ -241,18 +355,11 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
 
             val scale = 1f + (1f - t) * 1.5f
             val lineLength = 6f * scale
-            //val lineLength = lerp(30f, 4f, t)
 
             val centerLineLength = lerp(20f, 4f, t)  // 可変（動きを出す）
             val edgeLineLength = 14f                 // 固定（動かない）
 
-            //if (i % 2 == 0) {
-                //canvas.drawLine(mid, baseY, mid, baseY + lineLength, centerLinePaint)
-                canvas.drawLine(mid, baseY, mid, baseY + centerLineLength, centerLinePaint)
-            //}
-            //canvas.drawLine(left + 2, baseY, left + 2, baseY + lineLength, edgeLinePaint)
-            //canvas.drawLine(right - 2, baseY, right - 2, baseY + lineLength, edgeLinePaint)
-            // フチ（動かさない）
+            canvas.drawLine(mid, baseY, mid, baseY + centerLineLength, centerLinePaint)
             canvas.drawLine(left + 2, fixedY, left + 2, fixedY + edgeLineLength, edgeLinePaint)
             canvas.drawLine(right - 2, fixedY, right - 2, fixedY + edgeLineLength, edgeLinePaint)
         }
