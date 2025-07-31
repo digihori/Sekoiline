@@ -7,6 +7,7 @@ import android.util.Log
 import android.view.KeyEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
+import kotlin.math.abs
 import kotlin.math.pow
 
 enum class SteeringState {
@@ -16,7 +17,11 @@ enum class SteeringState {
 data class EnemyCar(
     var distance: Float,     // 自車からの相対距離（大きいほど奥）
     var laneOffset: Float,   // 左右位置（0 = 中央、負 = 左、正 = 右）
-    var speed: Float         // 敵車の移動速度（自車との差）
+    var speed: Float,         // 敵車の移動速度（自車との差）
+    var targetLaneOffset: Float = laneOffset,
+    var isStoppedDueToCollision: Boolean = false,
+    var laneCenter: Float = 0f,
+    var carWidth: Float = 0f
 )
 
 
@@ -45,7 +50,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
 
     private var roadScrollOffset = 0f
 
-    private var enableEnemies = true // デバッグ用に敵出現のON/OFF切り替え
+    private var enableEnemies = true    // デバッグ用に敵出現のON/OFF切り替え
     private val enemyCars = mutableListOf<EnemyCar>()
     private val enemyCarBitmap = BitmapFactory.decodeResource(resources, R.drawable.car_enemy)
     private val maxEnemyDepth = 14f  // 適宜調整可（例：距離200で画面奥に達する）
@@ -179,7 +184,6 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
             if (bgScrollX >= it.width) bgScrollX -= it.width
         }
 
-
         roadShift += (currentCurve * oversteerFactor - steeringInput) * 2f
         roadShift = roadShift.coerceIn(-maxShift, maxShift)
 
@@ -193,7 +197,8 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         updateSteeringInput()
 
         updateEnemyCars()
-
+        checkCollisions()
+        updateEnemyCarStates()
 
         val isCurrentlyTunnel = courseManager.isInTunnel(distance)  // ← CourseManager に実装予定
 
@@ -266,10 +271,6 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
 
         canvas.drawBitmap(scaledBitmap, left.toFloat(), top.toFloat(), null)
 
-        if (enableEnemies && frameCount % 60 == 0) { // 約1秒ごとに出現（60fps前提）
-            spawnEnemyCar()
-        }
-
     }
 
     private fun drawBackground(canvas: Canvas) {
@@ -278,30 +279,41 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
 
         if (tunnelState != TunnelState.IN_TUNNEL) {
             backgroundBitmap?.let { bitmap ->
-                //Log.d("TunnelFade", "Background bitmap is set: width=${bitmap.width}, height=${bitmap.height}")
-                val bgHeight = height - height / 2
                 val bmpW = bitmap.width
                 val bmpH = bitmap.height
+
+                // 表示高さを指定（例：画面の上半分）
+                val destHeight = height / 2f
+                val aspectRatio = bmpW.toFloat() / bmpH.toFloat()
+                val destWidth = destHeight * aspectRatio
+
+                // 水平スクロール位置の計算（ループ対応）
                 val scrollX = ((bgScrollX % bmpW) + bmpW) % bmpW
                 val intScrollX = scrollX.toInt()
 
-                var drawX = 0
+                val bgPaint = Paint().apply {
+                    alpha = 255
+                    isFilterBitmap = true  // 拡大縮小時に滑らかに表示
+                }
+
+                var drawX = 0f
                 var srcX = intScrollX
 
                 while (drawX < width) {
                     val remainingSrc = bmpW - srcX
-                    val drawWidth = minOf(remainingSrc, width - drawX)
+                    val drawSrcWidth = minOf(remainingSrc, bmpW)
+                    val drawDestWidth = destWidth * (drawSrcWidth.toFloat() / bmpW)
 
-                    val src = Rect(srcX, 0, srcX + drawWidth, bmpH)
-                    val dst = Rect(drawX, 0, drawX + drawWidth, bgHeight)
-
-                    val bgPaint = Paint().apply {
-                        alpha = 255  // 完全に不透明にしておく
-                    }
-                    //Log.d("TunnelDraw", "背景描画実行: bgScrollX=$bgScrollX")
+                    val src = Rect(srcX, 0, srcX + drawSrcWidth, bmpH)
+                    val dst = RectF(
+                        drawX,
+                        0f,  // 上寄せする場合
+                        drawX + drawDestWidth,
+                        destHeight
+                    )
                     canvas.drawBitmap(bitmap, src, dst, bgPaint)
 
-                    drawX += drawWidth
+                    drawX += drawDestWidth
                     srcX = 0
                 }
             } ?: run {
@@ -311,6 +323,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                 paint.color = Color.BLACK
                 canvas.drawRect(0f, 0f, width.toFloat(), (height / 2).toFloat(), paint)
             }
+
         }
         // フェード演出またはトンネル内の黒塗り
         if (tunnelState == TunnelState.ENTER_FADE_OUT ||
@@ -441,6 +454,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
             val roadRight = baseCenterX + roadWidth / 2 + curveOffset
 
             val laneCenter = (roadLeft + roadRight) / 2f + (roadWidth / 2f) * enemy.laneOffset
+            enemy.laneCenter = laneCenter
 
             val carWidth = lerp(220f, 32f, t)
             val carHeight = lerp(220f, 32f, t)
@@ -457,17 +471,90 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         }
     }
 
+    private var enemyLaneChangeCounter = 0
+    private var enemySpawnCooldown = 0
+    private var nextEnemySpawnInterval = 60
+
     private fun updateEnemyCars() {
-        val iterator = enemyCars.iterator()
-        while (iterator.hasNext()) {
-            val enemy = iterator.next()
-            enemy.distance -= 0.1f
-            //Log.d("EnemyDebug", "distance=${enemy.distance}")
-            if (enemy.distance < -2) {
-                iterator.remove() // 画面外に出たら削除
+        enemySpawnCooldown++
+
+        if (enableEnemies && enemySpawnCooldown >= nextEnemySpawnInterval) {
+            spawnEnemyCar()
+            enemySpawnCooldown = 0
+            nextEnemySpawnInterval = (30..180).random() // 次の出現までのフレーム数をランダムで設定（1〜2.5秒）
+        }
+
+        // カウンター更新
+        enemyLaneChangeCounter++
+        val shouldUpdateTarget = enemyLaneChangeCounter % 120 == 0  // 約1秒ごと（60フレーム）
+
+        for (enemy in enemyCars) {
+            // ランダムに目標laneOffsetを更新（-0.9 〜 +0.9 の範囲）
+            if (shouldUpdateTarget) {
+                enemy.targetLaneOffset = (Math.random().toFloat() * 0.8f) - 0.4f
+            }
+
+            // 現在のlaneOffsetをtargetに滑らかに近づける
+            val smoothing = 0.02f
+            enemy.laneOffset += (enemy.targetLaneOffset - enemy.laneOffset) * smoothing
+
+            // distanceを減らして接近させる
+            //enemy.distance -= enemy.speed
+            if (!enemy.isStoppedDueToCollision) {
+                enemy.distance -= 0.1f
+            }
+        }
+
+        // 古い敵車を削除
+        enemyCars.removeAll { it.distance < -2f }
+    }
+
+    private fun checkCollisions() {
+        val thresholdDistance = 2.5f  // 衝突判定のZ距離（手前すぎると間に合わないのでやや余裕）
+
+        for (enemy in enemyCars) {
+            if (enemy.isStoppedDueToCollision) continue  // すでに衝突で止まってる
+
+            val collisionZOffset = 2f
+            val dz = enemy.distance - collisionZOffset
+            if (dz < 0f || dz > thresholdDistance) continue  // 範囲外の敵車は無視
+
+            val t = dz / maxEnemyDepth
+            val carWidth = lerp(140f, 32f, t)
+
+            val playerX = width / 2f  // 自車は常に画面中央に描画
+            val enemyX = enemy.laneCenter   // drawEnemyCars() で使ってるのと同じ計算式をここでも使う
+
+            val dx = enemyX - playerX
+            val collisionMargin = carWidth * 0.9f  // 少し小さめのマージン
+
+            if (abs(dx) < collisionMargin) {
+                // 衝突判定成功！
+                enemy.isStoppedDueToCollision = true
+                enemy.carWidth = collisionMargin
+                Log.d("Collision", "enemy at distance=${enemy.distance} STOPPED due to collision")
             }
         }
     }
+
+    private fun updateEnemyCarStates() {
+        for (enemy in enemyCars) {
+            if (!enemy.isStoppedDueToCollision) continue  // 衝突してない敵はスキップ
+
+            // 自車の現在の画面X座標を取得
+            val playerX = width / 2
+
+            // この敵車の画面上X座標を取得（描画用に使ってるやつ）
+            val enemyX = enemy.laneCenter  // または drawEnemyCars 時に enemy.screenX = laneCenter と記録しておく
+
+            if (abs(playerX - enemyX) > enemy.carWidth) {
+                enemy.isStoppedDueToCollision = false
+                enemy.carWidth = 0f
+                Log.d("Collision", "enemy resumed: playerX=$playerX, enemyX=$enemyX")
+            }
+        }
+    }
+
 
     fun onButtonPressed(input: GameInput) {
         when (input) {
