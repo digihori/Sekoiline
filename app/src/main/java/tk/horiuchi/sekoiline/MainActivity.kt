@@ -1,11 +1,15 @@
 package tk.horiuchi.sekoiline
 
+import android.content.Intent
 import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.KeyEvent
+import android.view.Menu
+import android.view.MenuItem
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowInsets
@@ -14,6 +18,7 @@ import android.widget.Button
 import android.widget.ImageButton
 import android.widget.TextView
 import androidx.activity.enableEdgeToEdge
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
 import androidx.core.view.ViewCompat
@@ -90,6 +95,22 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onCreateOptionsMenu(menu: Menu?): Boolean {
+        menuInflater.inflate(R.menu.menu_main, menu)
+        return true
+    }
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        return when (item.itemId) {
+            R.id.action_about -> {
+                //gameView.pauseGame()
+                //gameView.forceStopCoffeeBreak()
+                showAboutDialog()
+                true
+            }
+            else -> super.onOptionsItemSelected(item)
+        }
+    }
+
     // ゲームパッドのキー入力対応
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         return if (gameView.onKeyDown(keyCode)) true else super.onKeyDown(keyCode, event)
@@ -97,6 +118,27 @@ class MainActivity : AppCompatActivity() {
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
         return if (gameView.onKeyUp(keyCode)) true else super.onKeyUp(keyCode, event)
+    }
+
+    private fun showAboutDialog() {
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.about_title))
+            .setMessage(getString(R.string.about_message))
+            //.setPositiveButton(getString(R.string.about_ok), null)
+            .setPositiveButton(getString(R.string.about_ok)) { dialog, _ ->
+                dialog.dismiss()
+                //gameView.resumeGame()  // ★ ダイアログが閉じられたときにゲームを再開
+            }
+            .setNeutralButton(getString(R.string.about_hyperlink_name)) { _, _ ->
+                val url = getString(R.string.about_hyperlink)
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                startActivity(intent)
+                //gameView.resumeGame()
+            }
+            .setOnCancelListener {
+                //gameView.resumeGame()  // ★ 戻るボタンなどでもゲームを再開
+            }
+            .show()
     }
 
 }

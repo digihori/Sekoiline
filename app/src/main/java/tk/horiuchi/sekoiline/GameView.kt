@@ -13,6 +13,13 @@ enum class SteeringState {
     LEFT2, LEFT1, STRAIGHT, RIGHT1, RIGHT2
 }
 
+data class EnemyCar(
+    var distance: Float,     // 自車からの相対距離（大きいほど奥）
+    var laneOffset: Float,   // 左右位置（0 = 中央、負 = 左、正 = 右）
+    var speed: Float         // 敵車の移動速度（自車との差）
+)
+
+
 class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, attrs), SurfaceHolder.Callback {
 
     private val drawThread = GameThread()
@@ -38,7 +45,15 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
 
     private var roadScrollOffset = 0f
 
-
+    private var enableEnemies = true // デバッグ用に敵出現のON/OFF切り替え
+    private val enemyCars = mutableListOf<EnemyCar>()
+    private val enemyCarBitmap = BitmapFactory.decodeResource(resources, R.drawable.car_enemy)
+    private val maxEnemyDepth = 14f  // 適宜調整可（例：距離200で画面奥に達する）
+    private val enemyPaint = Paint().apply {
+        isFilterBitmap = false
+        isAntiAlias = false
+        alpha = 255  // 常に不透明
+    }
 
     init {
         //Log.w("GameView", "init")
@@ -177,6 +192,9 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         }
         updateSteeringInput()
 
+        updateEnemyCars()
+
+
         val isCurrentlyTunnel = courseManager.isInTunnel(distance)  // ← CourseManager に実装予定
 
         //Log.d("TunnelDebug", "update: tunnelState=$tunnelState fadeProgress=$tunnelFadeProgress dist=$distance")
@@ -191,7 +209,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
 
             TunnelState.ENTER_FADE_OUT -> {
                 tunnelFadeProgress += 0.02f
-                Log.d("TunnelDebug", "ENTER_FADE_OUT進行: fadeProgress=$tunnelFadeProgress")
+                //Log.d("TunnelDebug", "ENTER_FADE_OUT進行: fadeProgress=$tunnelFadeProgress")
                 if (tunnelFadeProgress >= 1.0f) {
                     tunnelState = TunnelState.IN_TUNNEL
                     //Log.d("TunnelState", "状態遷移: ENTER_FADE_OUT → IN_TUNNEL")
@@ -224,10 +242,14 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         statusUpdateListener?.invoke("TIME: %.1f   SPEED: ${speed}km/h   DIST: %05d".format(time, distance))
     }
 
+    private var frameCount = 0
     private fun drawGame(canvas: Canvas) {
         canvas.drawColor(Color.BLACK)
         drawBackground(canvas)
         drawRoad(canvas)
+        drawEnemyCars(canvas)
+
+        frameCount++
 
         val bitmap = carBitmaps[steeringState] ?: return
         val scale = 1.5f  // ここでサイズ倍率を指定（1.0 = 等倍）
@@ -243,6 +265,11 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         val top = bottomY - scaledBitmap.height
 
         canvas.drawBitmap(scaledBitmap, left.toFloat(), top.toFloat(), null)
+
+        if (enableEnemies && frameCount % 60 == 0) { // 約1秒ごとに出現（60fps前提）
+            spawnEnemyCar()
+        }
+
     }
 
     private fun drawBackground(canvas: Canvas) {
@@ -344,7 +371,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
             // フチ用の固定Y座標（スクロールしない）
             val fixedY = height - i * lineSpacing
 
-            val roadWidth = lerp(width * 0.9f, width * 0.2f, t)
+            val roadWidth = lerp(width * 0.95f, width * 0.2f, t)
             val curveAmount = currentCurve * (t.pow(2)) * maxShift * 0.5f
 
             val left = baseCenterX - roadWidth / 2 + curveAmount
@@ -381,6 +408,64 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
             steeringInput = minOf(steeringInput + steeringSpeed, targetSteering)
         } else if (steeringInput > targetSteering) {
             steeringInput = maxOf(steeringInput - steeringSpeed, targetSteering)
+        }
+    }
+
+
+    private fun spawnEnemyCar() {
+        Log.d("EnemyTest", "spawnEnemyCar() called")
+        val lane = listOf(-0.6f, -0.3f, 0.0f, 0.3f, 0.6f).random() // ランダムに左・中央・右
+        val speed = 2f + (0..5).random() * 0.2f // 少し速度差をつける
+        val newCar = EnemyCar(
+            distance = maxEnemyDepth,     // 奥に登場（仮
+            laneOffset = lane,
+            speed = speed
+        )
+        enemyCars.add(newCar)
+    }
+
+    private fun drawEnemyCars(canvas: Canvas) {
+        //Log.d("EnemyTest", "drawEnemyCar() called")
+        val roadBottomY = height.toFloat()
+        val lineSpacing = height / param1
+        val numLines = (height / lineSpacing / 2).toInt()
+        val baseCenterX = width / 2f + roadShift
+
+        for (enemy in enemyCars) {
+            val t = enemy.distance / maxEnemyDepth.toFloat() // 0〜1の範囲
+            val baseY = roadBottomY - enemy.distance * lineSpacing
+
+            val roadWidth = lerp(width * 0.95f, width * 0.2f, t)
+            val curveOffset = currentCurve * (t * t) * maxShift * 0.5f
+            val roadLeft = baseCenterX - roadWidth / 2 + curveOffset
+            val roadRight = baseCenterX + roadWidth / 2 + curveOffset
+
+            val laneCenter = (roadLeft + roadRight) / 2f + (roadWidth / 2f) * enemy.laneOffset
+
+            val carWidth = lerp(220f, 32f, t)
+            val carHeight = lerp(220f, 32f, t)
+            Log.d("ScaleCheck", "t=$t, w=$carWidth, h=$carHeight")
+
+            val left = laneCenter - carWidth / 2
+            val top = baseY - carHeight
+            val right = laneCenter + carWidth / 2
+            val bottom = baseY
+
+            //Log.d("EnemyDebug", "enemy: d=${enemy.distance} -> baseY=$baseY t=$t")
+            //Log.d("EnemyTest", "drawEnemyCar() draw!")
+            canvas.drawBitmap(enemyCarBitmap, null, RectF(left, top, right, bottom), enemyPaint)
+        }
+    }
+
+    private fun updateEnemyCars() {
+        val iterator = enemyCars.iterator()
+        while (iterator.hasNext()) {
+            val enemy = iterator.next()
+            enemy.distance -= 0.1f
+            //Log.d("EnemyDebug", "distance=${enemy.distance}")
+            if (enemy.distance < -2) {
+                iterator.remove() // 画面外に出たら削除
+            }
         }
     }
 
