@@ -68,6 +68,17 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         alpha = 255  // 常に不透明
     }
 
+    enum class GameState {
+        START_READY,   // スタート演出中
+        PLAYING,       // 通常プレイ中
+        GAME_OVER      // ゲームオーバー演出中
+    }
+    private var gameState = GameState.START_READY
+    private var stateTimer = 0f
+    private var countdownText = ""
+
+
+
     init {
         //Log.w("GameView", "init")
         holder.addCallback(this)
@@ -90,6 +101,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
     override fun surfaceCreated(holder: SurfaceHolder) {
         drawThread.running = true
         drawThread.start()
+        restartGame()
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
@@ -142,143 +154,200 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
     private var param2 = 8f
     private var lastBackgroundResId: Int = -1  // 直前の背景IDを保持
     private fun update() {
-        if (roadTestMode) {
-            // 単純にスクロールだけ進める
-            val lineSpacing = height / param1
-            val scrollSpeed = (speed / MAX_SPEED) * param2  // 固定値で見やすく
-            roadScrollOffset += scrollSpeed
-            roadScrollOffset %= lineSpacing
-            //Log.d("GameView-test", "scrollSpeed=$scrollSpeed lineSpacing=$lineSpacing param=$param1")
-            return  // 他のロジックはスキップ
-        }
-        distance += speed / 60
-        time -= 1f / 60f
-        if (time <= 0f) time = 0f
+        when (gameState) {
+            GameState.START_READY -> {
+                // スタート演出時間を進める
+                speed = 0f
+                stateTimer += 1f / 60f
+                statusUpdateListener?.invoke("TIME: %.1f   SPEED: ${speed.toInt()}km/h   DIST: %05d".format(time, distance.toInt()))
 
-
-        val segment = courseManager.getCurrentSegment(distance)
-        // 現在のセグメントのカーブ値を取得（ターゲット値）
-        val targetCurve = segment.curve
-        // 緩和係数（0.0〜1.0、小さいほど滑らか）
-        val smoothingFactor = 0.05f
-        // 緩やかにcurrentCurveを追従させる
-        currentCurve += (targetCurve - currentCurve) * smoothingFactor
-        // 小さな値はゼロとみなす
-        if (kotlin.math.abs(currentCurve) < 0.01f) {
-            currentCurve = 0f
-        }
-        //Log.d("GameView", "distance = $distance, segment = $segment")
-
-        // スクロール速度 = speed に比例（適宜調整）
-        //val scrollSpeed = speed / param2  // 小さくするとゆっくり
-        val normalizedSpeed = speed / MAX_SPEED  // 0.0 ～ 1.0 に正規化
-        easedSpeed = sqrt(normalizedSpeed)  // 前半急激、後半なめらか
-        val scrollSpeed = easedSpeed * param2
-        //val scrollSpeed = (speed / MAX_SPEED) * param2  // 小さくするとゆっくり
-        roadScrollOffset += scrollSpeed
-        val lineSpacing = height / param1  // drawRoad でも同じ spacing を使用している前提
-        roadScrollOffset %= lineSpacing
-
-        // ★ 背景画像を必要に応じて更新
-        val bgResId = segment.background
-        if (bgResId != null && bgResId != lastBackgroundResId) {
-            //Log.d("TunnelDebug", "背景切替: last=$lastBackgroundResId → new=$bgResId at distance=$distance")
-            backgroundBitmap = BitmapFactory.decodeResource(resources, bgResId)
-            lastBackgroundResId = bgResId
-        }
-
-        // 背景のスクロール速度も、コースカーブとステアリングの差に応じて変化
-        if (speed >= 60) {
-            bgScrollSpeed = currentCurve * oversteerFactor * 5f
-            bgScrollX += bgScrollSpeed
-            backgroundBitmap?.let {
-                if (bgScrollX < 0) bgScrollX += it.width
-                if (bgScrollX >= it.width) bgScrollX -= it.width
-            }
-        } else {
-            bgScrollSpeed = 0f
-        }
-
-        roadShift += (currentCurve * oversteerFactor - steeringInput) * 2f
-        roadShift = roadShift.coerceIn(-maxShift, maxShift)
-        val touchingLeftCurb = roadShift <= -maxShift
-        val touchingRightCurb = roadShift >= maxShift
-        if (touchingLeftCurb || touchingRightCurb) {
-            isCollidingWithEdge = true  // 縁石に接触中
-        } else {
-            isCollidingWithEdge = false
-        }
-
-        steeringInput = when (steeringState) {
-            SteeringState.LEFT2 -> -4.0f
-            SteeringState.LEFT1 -> -2.0f
-            SteeringState.STRAIGHT -> 0.0f
-            SteeringState.RIGHT1 -> 2.0f
-            SteeringState.RIGHT2 -> 4.0f
-        }
-        updateSteeringInput()
-
-        updateEnemyCars()
-        checkCollisions()
-        updateEnemyCarStates()
-
-        val isCurrentlyTunnel = courseManager.isInTunnel(distance)  // ← CourseManager に実装予定
-
-        //Log.d("TunnelDebug", "update: tunnelState=$tunnelState fadeProgress=$tunnelFadeProgress dist=$distance")
-        when (tunnelState) {
-            TunnelState.NONE -> {
-                if (isCurrentlyTunnel) {
-                    tunnelState = TunnelState.ENTER_FADE_OUT
-                    tunnelFadeProgress = 0f
-                    //Log.d("TunnelState", "状態遷移: NONE → ENTER_FADE_OUT")
+                countdownText = when {
+                    stateTimer < 1f -> "3"
+                    stateTimer < 2f -> "2"
+                    stateTimer < 3f -> "1"
+                    stateTimer < 4f -> "GO!"
+                    else -> {
+                        gameState = GameState.PLAYING
+                        stateTimer = 0f
+                        ""
+                    }
                 }
-            }
-
-            TunnelState.ENTER_FADE_OUT -> {
-                tunnelFadeProgress += 0.02f
-                //Log.d("TunnelDebug", "ENTER_FADE_OUT進行: fadeProgress=$tunnelFadeProgress")
-                if (tunnelFadeProgress >= 1.0f) {
-                    tunnelState = TunnelState.IN_TUNNEL
-                    //Log.d("TunnelState", "状態遷移: ENTER_FADE_OUT → IN_TUNNEL")
+                if (stateTimer > 3.5f) { // 4秒後に開始
+                    gameState = GameState.PLAYING
+                    stateTimer = 0f
                 }
+                return // スタート演出中はここで終了
             }
 
-            TunnelState.IN_TUNNEL -> {
-                if (!isCurrentlyTunnel) {
-                    tunnelState = TunnelState.EXIT_FADE_IN
-                    tunnelFadeProgress = 0f
-                    //Log.d("TunnelState", "状態遷移: IN_TUNNEL → EXIT_FADE_IN")
+            GameState.PLAYING -> {
+                // ここに既存の update() の内容を移動（元の処理）
+                if (roadTestMode) {
+                    // 単純にスクロールだけ進める
+                    val lineSpacing = height / param1
+                    val scrollSpeed = (speed / MAX_SPEED) * param2  // 固定値で見やすく
+                    roadScrollOffset += scrollSpeed
+                    roadScrollOffset %= lineSpacing
+                    //Log.d("GameView-test", "scrollSpeed=$scrollSpeed lineSpacing=$lineSpacing param=$param1")
+                    return  // 他のロジックはスキップ
                 }
-            }
+                distance += speed / 60
+                time -= 1f / 60f
+                if (time <= 0f) time = 0f
 
-            TunnelState.EXIT_FADE_IN -> {
-                tunnelFadeProgress += 0.02f
-                if (tunnelFadeProgress >= 1.0f) {
-                    tunnelState = TunnelState.DONE
-                    //Log.d("TunnelState", "状態遷移: EXIT_FADE_IN → DONE")
+
+                val segment = courseManager.getCurrentSegment(distance)
+                // 現在のセグメントのカーブ値を取得（ターゲット値）
+                val targetCurve = segment.curve
+                // 緩和係数（0.0〜1.0、小さいほど滑らか）
+                val smoothingFactor = 0.05f
+                // 緩やかにcurrentCurveを追従させる
+                currentCurve += (targetCurve - currentCurve) * smoothingFactor
+                // 小さな値はゼロとみなす
+                if (kotlin.math.abs(currentCurve) < 0.01f) {
+                    currentCurve = 0f
                 }
+                //Log.d("GameView", "distance = $distance, segment = $segment")
+
+                // スクロール速度 = speed に比例（適宜調整）
+                //val scrollSpeed = speed / param2  // 小さくするとゆっくり
+                val normalizedSpeed = speed / MAX_SPEED  // 0.0 ～ 1.0 に正規化
+                easedSpeed = sqrt(normalizedSpeed)  // 前半急激、後半なめらか
+                val scrollSpeed = easedSpeed * param2
+                //val scrollSpeed = (speed / MAX_SPEED) * param2  // 小さくするとゆっくり
+                roadScrollOffset += scrollSpeed
+                val lineSpacing = height / param1  // drawRoad でも同じ spacing を使用している前提
+                roadScrollOffset %= lineSpacing
+
+                // ★ 背景画像を必要に応じて更新
+                val bgResId = segment.background
+                if (bgResId != null && bgResId != lastBackgroundResId) {
+                    //Log.d("TunnelDebug", "背景切替: last=$lastBackgroundResId → new=$bgResId at distance=$distance")
+                    backgroundBitmap = BitmapFactory.decodeResource(resources, bgResId)
+                    lastBackgroundResId = bgResId
+                }
+
+                // 背景のスクロール速度も、コースカーブとステアリングの差に応じて変化
+                if (speed >= 60) {
+                    bgScrollSpeed = currentCurve * oversteerFactor * 5f
+                    bgScrollX += bgScrollSpeed
+                    backgroundBitmap?.let {
+                        if (bgScrollX < 0) bgScrollX += it.width
+                        if (bgScrollX >= it.width) bgScrollX -= it.width
+                    }
+                } else {
+                    bgScrollSpeed = 0f
+                }
+
+                roadShift += (currentCurve * oversteerFactor - steeringInput) * 2f
+                roadShift = roadShift.coerceIn(-maxShift, maxShift)
+                val touchingLeftCurb = roadShift <= -maxShift
+                val touchingRightCurb = roadShift >= maxShift
+                if (touchingLeftCurb || touchingRightCurb) {
+                    isCollidingWithEdge = true  // 縁石に接触中
+                } else {
+                    isCollidingWithEdge = false
+                }
+
+                steeringInput = when (steeringState) {
+                    SteeringState.LEFT2 -> -4.0f
+                    SteeringState.LEFT1 -> -2.0f
+                    SteeringState.STRAIGHT -> 0.0f
+                    SteeringState.RIGHT1 -> 2.0f
+                    SteeringState.RIGHT2 -> 4.0f
+                }
+                updateSteeringInput()
+
+                updateEnemyCars()
+                checkCollisions()
+                updateEnemyCarStates()
+
+                val isCurrentlyTunnel = courseManager.isInTunnel(distance)  // ← CourseManager に実装予定
+
+                //Log.d("TunnelDebug", "update: tunnelState=$tunnelState fadeProgress=$tunnelFadeProgress dist=$distance")
+                when (tunnelState) {
+                    TunnelState.NONE -> {
+                        if (isCurrentlyTunnel) {
+                            tunnelState = TunnelState.ENTER_FADE_OUT
+                            tunnelFadeProgress = 0f
+                            //Log.d("TunnelState", "状態遷移: NONE → ENTER_FADE_OUT")
+                        }
+                    }
+
+                    TunnelState.ENTER_FADE_OUT -> {
+                        tunnelFadeProgress += 0.02f
+                        //Log.d("TunnelDebug", "ENTER_FADE_OUT進行: fadeProgress=$tunnelFadeProgress")
+                        if (tunnelFadeProgress >= 1.0f) {
+                            tunnelState = TunnelState.IN_TUNNEL
+                            //Log.d("TunnelState", "状態遷移: ENTER_FADE_OUT → IN_TUNNEL")
+                        }
+                    }
+
+                    TunnelState.IN_TUNNEL -> {
+                        if (!isCurrentlyTunnel) {
+                            tunnelState = TunnelState.EXIT_FADE_IN
+                            tunnelFadeProgress = 0f
+                            //Log.d("TunnelState", "状態遷移: IN_TUNNEL → EXIT_FADE_IN")
+                        }
+                    }
+
+                    TunnelState.EXIT_FADE_IN -> {
+                        tunnelFadeProgress += 0.02f
+                        if (tunnelFadeProgress >= 1.0f) {
+                            tunnelState = TunnelState.DONE
+                            //Log.d("TunnelState", "状態遷移: EXIT_FADE_IN → DONE")
+                        }
+                    }
+
+                    TunnelState.DONE -> {
+                        tunnelState = TunnelState.NONE
+                        //Log.d("TunnelState", "状態遷移: DONE → NONE")
+                    }
+                }
+                invalidate()
+
+                // 衝突 or 縁石接触時の減速
+                if (isCollidingWithEnemy > 0) {
+                    speed = maxOf(0f, speed - DECELERATION_COLLISION)
+                } else if (isCollidingWithEdge) {
+                    speed = maxOf(0f, speed - DECELERATION_EDGE)
+                } else {
+                    // 通常加速
+                    if (speed < MAX_SPEED) {
+                        speed = minOf(MAX_SPEED, speed + ACCELERATION)
+                    }
+                }
+
+                // ゲームオーバー条件チェック
+                if (time <= 0f) {
+                    gameState = GameState.GAME_OVER
+                    stateTimer = 0f
+                }
+                statusUpdateListener?.invoke("TIME: %.1f   SPEED: ${speed.toInt()}km/h   DIST: %05d".format(time, distance.toInt()))
             }
 
-            TunnelState.DONE -> {
-                tunnelState = TunnelState.NONE
-                //Log.d("TunnelState", "状態遷移: DONE → NONE")
+            GameState.GAME_OVER -> {
+                stateTimer += 1f / 60f
+
+                // ゆっくり減速
+                if (speed > 0f) {
+                    speed = maxOf(0f, speed - 2f)
+                }
+
+                // 背景スクロール停止
+                bgScrollSpeed = 0f
+
+                // 画面フェードやGAME OVER文字は drawGame() 側で描画
+                invalidate()
+
+                // 3秒後に再スタート待ち
+                if (stateTimer > 3f) {
+                    // ここでボタン押下を待って START_READY に戻す
+                }
+                statusUpdateListener?.invoke("TIME: %.1f   SPEED: ${speed.toInt()}km/h   DIST: %05d".format(time, distance.toInt()))
+                return
             }
         }
-        invalidate()
 
-        // 衝突 or 縁石接触時の減速
-        if (isCollidingWithEnemy > 0) {
-            speed = maxOf(0f, speed - DECELERATION_COLLISION)
-        } else if (isCollidingWithEdge) {
-            speed = maxOf(0f, speed - DECELERATION_EDGE)
-        } else {
-            // 通常加速
-            if (speed < MAX_SPEED) {
-                speed = minOf(MAX_SPEED, speed + ACCELERATION)
-            }
-        }
-
-        statusUpdateListener?.invoke("TIME: %.1f   SPEED: ${speed.toInt()}km/h   DIST: %05d".format(time, distance.toInt()))
     }
 
     private var frameCount = 0
@@ -305,6 +374,46 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
 
         canvas.drawBitmap(scaledBitmap, left.toFloat(), top.toFloat(), null)
 
+        // カウントダウン描画
+        if (gameState == GameState.START_READY && countdownText.isNotEmpty()) {
+            val paint = Paint().apply {
+                color = if (countdownText == "GO!") Color.GREEN else Color.RED
+                textSize = 200f
+                textAlign = Paint.Align.CENTER
+                isFakeBoldText = true
+            }
+            canvas.drawText(countdownText, width / 2f, height / 2f, paint)
+        }
+
+        if (gameState == GameState.GAME_OVER) {
+            val paint = Paint().apply {
+                color = Color.RED
+                textSize = 120f
+                textAlign = Paint.Align.CENTER
+                isFakeBoldText = true
+            }
+            canvas.drawText("GAME OVER", width / 2f, height / 2f, paint)
+        }
+
+    }
+
+    fun restartGame() {
+        // スレッドが動いてなければ再開
+        if (!drawThread.running) {
+            drawThread.running = true
+            drawThread.start()
+        }
+
+        // 変数リセット
+        time = 5f
+        distance = 0f
+        speed = 0f
+        enemyCars.clear()
+        isCollidingWithEnemy = 0
+        isCollidingWithEdge = false
+        stateTimer = 0f
+
+        gameState = GameState.START_READY
     }
 
     private fun drawBackground(canvas: Canvas) {
@@ -611,6 +720,10 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
 
 
     fun onButtonPressed(input: GameInput) {
+        if (gameState == GameState.GAME_OVER && stateTimer > 3f) {
+            restartGame()
+            return
+        }
         when (input) {
             GameInput.LEFT -> {
                 steeringState = when (steeringState) {
@@ -620,7 +733,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                     SteeringState.LEFT1 -> SteeringState.LEFT2
                     else -> SteeringState.LEFT2
                 }
-                param2++
+                //param2++
             }
 
             GameInput.RIGHT -> {
@@ -631,16 +744,16 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                     SteeringState.RIGHT1 -> SteeringState.RIGHT2
                     else -> SteeringState.RIGHT2
                 }
-                param2--
+                //param2--
             }
 
             GameInput.ACCELERATE -> {
-                speed = minOf(speed + 10f, 240f)
-                param1++
+                //speed = minOf(speed + 10f, 240f)
+                //param1++
             }
             GameInput.BRAKE -> {
-                speed = maxOf(speed - 10f, 0f)
-                param1--
+                //speed = maxOf(speed - 10f, 0f)
+                //param1--
             }
         }
     }
@@ -652,7 +765,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
     }
 
     fun onKeyDown(keyCode: Int): Boolean {
-        Log.w("GameView", "onKeyDown: $keyCode")
+        //Log.w("GameView", "onKeyDown: $keyCode")
         return when (keyCode) {
             KeyEvent.KEYCODE_DPAD_LEFT -> { onButtonPressed(GameInput.LEFT); true }
             KeyEvent.KEYCODE_DPAD_RIGHT -> { onButtonPressed(GameInput.RIGHT); true }
@@ -663,7 +776,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
     }
 
     fun onKeyUp(keyCode: Int): Boolean {
-        Log.w("GameView", "onKeyUp: $keyCode")
+        //Log.w("GameView", "onKeyUp: $keyCode")
         return when (keyCode) {
             KeyEvent.KEYCODE_DPAD_LEFT,
             KeyEvent.KEYCODE_DPAD_RIGHT,
