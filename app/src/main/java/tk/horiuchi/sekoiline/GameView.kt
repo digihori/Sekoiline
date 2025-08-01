@@ -9,6 +9,7 @@ import android.view.SurfaceHolder
 import android.view.SurfaceView
 import kotlin.math.abs
 import kotlin.math.pow
+import kotlin.math.sqrt
 
 enum class SteeringState {
     LEFT2, LEFT1, STRAIGHT, RIGHT1, RIGHT2
@@ -34,8 +35,15 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
     private var bgScrollX = 0f
 
     private var time = 30.0f
-    private var speed = 120
-    private var distance = 0
+    private var distance = 0f
+    private var speed = 0f
+    private val MAX_SPEED = 300f
+    private val ACCELERATION = 0.5f      // 通常加速(km/h)
+    private val DECELERATION_COLLISION = 1.0f  // 衝突減速(km/h)
+    private val DECELERATION_EDGE = 0.7f       // 縁石減速(km/h)
+    private var isCollidingWithEnemy = 0
+    private var isCollidingWithEdge = false
+    private var easedSpeed = 1f
 
     private val courseManager = CourseManager()
     private var currentCurve = 0f
@@ -73,7 +81,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
             SteeringState.RIGHT1 to BitmapFactory.decodeResource(resources, R.drawable.car_right1),
             SteeringState.RIGHT2 to BitmapFactory.decodeResource(resources, R.drawable.car_right2),
         )
-        val initialSegment = courseManager.getCurrentSegment(0)
+        val initialSegment = courseManager.getCurrentSegment(0f)
         backgroundBitmap = initialSegment.background?.let {
             BitmapFactory.decodeResource(resources, it)
         }
@@ -131,13 +139,13 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
 
     private val roadTestMode = false
     private var param1 = 30f
-    private var param2 = 5f
+    private var param2 = 8f
     private var lastBackgroundResId: Int = -1  // 直前の背景IDを保持
     private fun update() {
         if (roadTestMode) {
             // 単純にスクロールだけ進める
             val lineSpacing = height / param1
-            val scrollSpeed = param2  // 固定値で見やすく
+            val scrollSpeed = (speed / MAX_SPEED) * param2  // 固定値で見やすく
             roadScrollOffset += scrollSpeed
             roadScrollOffset %= lineSpacing
             //Log.d("GameView-test", "scrollSpeed=$scrollSpeed lineSpacing=$lineSpacing param=$param1")
@@ -163,7 +171,10 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
 
         // スクロール速度 = speed に比例（適宜調整）
         //val scrollSpeed = speed / param2  // 小さくするとゆっくり
-        val scrollSpeed = param2  // 小さくするとゆっくり
+        val normalizedSpeed = speed / MAX_SPEED  // 0.0 ～ 1.0 に正規化
+        easedSpeed = sqrt(normalizedSpeed)  // 前半急激、後半なめらか
+        val scrollSpeed = easedSpeed * param2
+        //val scrollSpeed = (speed / MAX_SPEED) * param2  // 小さくするとゆっくり
         roadScrollOffset += scrollSpeed
         val lineSpacing = height / param1  // drawRoad でも同じ spacing を使用している前提
         roadScrollOffset %= lineSpacing
@@ -171,21 +182,32 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         // ★ 背景画像を必要に応じて更新
         val bgResId = segment.background
         if (bgResId != null && bgResId != lastBackgroundResId) {
-            Log.d("TunnelDebug", "背景切替: last=$lastBackgroundResId → new=$bgResId at distance=$distance")
+            //Log.d("TunnelDebug", "背景切替: last=$lastBackgroundResId → new=$bgResId at distance=$distance")
             backgroundBitmap = BitmapFactory.decodeResource(resources, bgResId)
             lastBackgroundResId = bgResId
         }
 
         // 背景のスクロール速度も、コースカーブとステアリングの差に応じて変化
-        bgScrollSpeed = currentCurve * oversteerFactor * 5f
-        bgScrollX += bgScrollSpeed
-        backgroundBitmap?.let {
-            if (bgScrollX < 0) bgScrollX += it.width
-            if (bgScrollX >= it.width) bgScrollX -= it.width
+        if (speed >= 60) {
+            bgScrollSpeed = currentCurve * oversteerFactor * 5f
+            bgScrollX += bgScrollSpeed
+            backgroundBitmap?.let {
+                if (bgScrollX < 0) bgScrollX += it.width
+                if (bgScrollX >= it.width) bgScrollX -= it.width
+            }
+        } else {
+            bgScrollSpeed = 0f
         }
 
         roadShift += (currentCurve * oversteerFactor - steeringInput) * 2f
         roadShift = roadShift.coerceIn(-maxShift, maxShift)
+        val touchingLeftCurb = roadShift <= -maxShift
+        val touchingRightCurb = roadShift >= maxShift
+        if (touchingLeftCurb || touchingRightCurb) {
+            isCollidingWithEdge = true  // 縁石に接触中
+        } else {
+            isCollidingWithEdge = false
+        }
 
         steeringInput = when (steeringState) {
             SteeringState.LEFT2 -> -4.0f
@@ -244,7 +266,19 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         }
         invalidate()
 
-        statusUpdateListener?.invoke("TIME: %.1f   SPEED: ${speed}km/h   DIST: %05d".format(time, distance))
+        // 衝突 or 縁石接触時の減速
+        if (isCollidingWithEnemy > 0) {
+            speed = maxOf(0f, speed - DECELERATION_COLLISION)
+        } else if (isCollidingWithEdge) {
+            speed = maxOf(0f, speed - DECELERATION_EDGE)
+        } else {
+            // 通常加速
+            if (speed < MAX_SPEED) {
+                speed = minOf(MAX_SPEED, speed + ACCELERATION)
+            }
+        }
+
+        statusUpdateListener?.invoke("TIME: %.1f   SPEED: ${speed.toInt()}km/h   DIST: %05d".format(time, distance.toInt()))
     }
 
     private var frameCount = 0
@@ -333,17 +367,17 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
             val alpha = when (tunnelState) {
                 TunnelState.ENTER_FADE_OUT -> {
                     val a = (tunnelFadeProgress * 255).toInt().coerceIn(0, 255)
-                    Log.d("TunnelFade", "ENTER_FADE_OUT: progress=$tunnelFadeProgress alpha=$a bgResId=$lastBackgroundResId")
+                    //Log.d("TunnelFade", "ENTER_FADE_OUT: progress=$tunnelFadeProgress alpha=$a bgResId=$lastBackgroundResId")
                     a
                 }
                 TunnelState.EXIT_FADE_IN   -> {
                     val a = ((1.0f - tunnelFadeProgress) * 255).toInt().coerceIn(0, 255)
                     //val a = (tunnelFadeProgress * 255).toInt().coerceIn(0, 255)
-                    Log.d("TunnelFade", "EXIT_FADE_IN: progress=$tunnelFadeProgress alpha=$a bgResId=$lastBackgroundResId")
+                    //Log.d("TunnelFade", "EXIT_FADE_IN: progress=$tunnelFadeProgress alpha=$a bgResId=$lastBackgroundResId")
                     a
                 }
                 TunnelState.IN_TUNNEL      -> {
-                    Log.d("TunnelFade", "IN_TUNNEL: alpha=255 bgResId=$lastBackgroundResId")
+                    //Log.d("TunnelFade", "IN_TUNNEL: alpha=255 bgResId=$lastBackgroundResId")
                     255
                 } // 完全に黒で塗りつぶす
                 else -> 0
@@ -426,14 +460,16 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
 
 
     private fun spawnEnemyCar() {
-        Log.d("EnemyTest", "spawnEnemyCar() called")
+        if (speed < 100f) return
+        //Log.d("EnemyTest", "spawnEnemyCar() called")
         val lane = listOf(-0.6f, -0.3f, 0.0f, 0.3f, 0.6f).random() // ランダムに左・中央・右
         val speed = 2f + (0..5).random() * 0.2f // 少し速度差をつける
         val newCar = EnemyCar(
             distance = maxEnemyDepth,     // 奥に登場（仮
             laneOffset = lane,
-            speed = speed
+            speed = speed //* easedSpeed
         )
+        //Log.d("EnemyDebug", "speed:${newCar.speed} easedSpeed={$easedSpeed}")
         enemyCars.add(newCar)
     }
 
@@ -458,7 +494,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
 
             val carWidth = lerp(220f, 32f, t)
             val carHeight = lerp(220f, 32f, t)
-            Log.d("ScaleCheck", "t=$t, w=$carWidth, h=$carHeight")
+            //Log.d("ScaleCheck", "t=$t, w=$carWidth, h=$carHeight")
 
             val left = laneCenter - carWidth / 2
             val top = baseY - carHeight
@@ -477,6 +513,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
 
     private fun updateEnemyCars() {
         enemySpawnCooldown++
+        val toRemove = mutableListOf<EnemyCar>()
 
         if (enableEnemies && enemySpawnCooldown >= nextEnemySpawnInterval) {
             spawnEnemyCar()
@@ -499,14 +536,29 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
             enemy.laneOffset += (enemy.targetLaneOffset - enemy.laneOffset) * smoothing
 
             // distanceを減らして接近させる
-            //enemy.distance -= enemy.speed
+            // スピードがしきい値以下なら奥に逃げる
+            // 衝突中の敵車の速度が落ちたら解除して逃げるのはupdateEnemyCarStates()で
+            val threshold = 0.5f
             if (!enemy.isStoppedDueToCollision) {
-                enemy.distance -= 0.1f
+                if (easedSpeed < threshold) {
+                    enemy.distance += 0.3f //* retreatSpeed
+                    // 奥に行きすぎたら削除
+                    if (enemy.distance >= maxEnemyDepth) {
+                        enemy.distance = maxEnemyDepth
+                        toRemove.add(enemy)
+                    }
+                } else {
+                    // 通常の接近
+                    enemy.distance -= 0.1f * easedSpeed
+                    if (enemy.distance < -2f) {
+                        toRemove.add(enemy)
+                    }
+                }
             }
         }
 
-        // 古い敵車を削除
-        enemyCars.removeAll { it.distance < -2f }
+        // 削除対象の敵車を削除
+        enemyCars.removeAll(toRemove)
     }
 
     private fun checkCollisions() {
@@ -531,6 +583,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
             if (abs(dx) < collisionMargin) {
                 // 衝突判定成功！
                 enemy.isStoppedDueToCollision = true
+                isCollidingWithEnemy++
                 enemy.carWidth = collisionMargin
                 Log.d("Collision", "enemy at distance=${enemy.distance} STOPPED due to collision")
             }
@@ -547,8 +600,9 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
             // この敵車の画面上X座標を取得（描画用に使ってるやつ）
             val enemyX = enemy.laneCenter  // または drawEnemyCars 時に enemy.screenX = laneCenter と記録しておく
 
-            if (abs(playerX - enemyX) > enemy.carWidth) {
+            if (abs(playerX - enemyX) > enemy.carWidth || speed < 50) {
                 enemy.isStoppedDueToCollision = false
+                if (isCollidingWithEnemy > 0) isCollidingWithEnemy--
                 enemy.carWidth = 0f
                 Log.d("Collision", "enemy resumed: playerX=$playerX, enemyX=$enemyX")
             }
@@ -581,11 +635,11 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
             }
 
             GameInput.ACCELERATE -> {
-                speed = minOf(speed + 10, 240)
+                speed = minOf(speed + 10f, 240f)
                 param1++
             }
             GameInput.BRAKE -> {
-                speed = maxOf(speed - 10, 0)
+                speed = maxOf(speed - 10f, 0f)
                 param1--
             }
         }

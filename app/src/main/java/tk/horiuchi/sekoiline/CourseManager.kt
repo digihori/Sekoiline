@@ -37,7 +37,7 @@ class CourseManager {
     }
 
     // 現在の距離に応じたコースセグメント情報を返す
-    fun getCurrentSegment(distance: Int): CourseSegment {
+    fun getCurrentSegment(distance: Float): CourseSegment {
         val loopedDistance = distance % totalLength
         var covered = 0
         for (segment in segments) {
@@ -50,7 +50,7 @@ class CourseManager {
     }
 
     // 現在トンネルかどうか（呼び出し元で distance を渡す）
-    fun isInTunnel(distance: Int): Boolean {
+    fun isInTunnel(distance: Float): Boolean {
         return getCurrentSegment(distance).background == null
     }
 }
