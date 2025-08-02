@@ -5,6 +5,7 @@ import android.graphics.*
 import android.util.AttributeSet
 import android.util.Log
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import kotlin.math.abs
@@ -29,7 +30,7 @@ data class EnemyCar(
 class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, attrs), SurfaceHolder.Callback {
 
     private val drawThread = GameThread()
-    private var statusUpdateListener: ((String) -> Unit)? = null
+    private var statusUpdateListener: ((String, String, String) -> Unit)? = null
     private lateinit var carBitmaps: Map<SteeringState, Bitmap>
     private var backgroundBitmap: Bitmap? = null
     private var bgScrollX = 0f
@@ -159,7 +160,11 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                 // スタート演出時間を進める
                 speed = 0f
                 stateTimer += 1f / 60f
-                statusUpdateListener?.invoke("TIME: %.1f   SPEED: ${speed.toInt()}km/h   DIST: %05d".format(time, distance.toInt()))
+                statusUpdateListener?.invoke(
+                    speed.toInt().toString(),
+                    time.toInt().toString(),
+                    distance.toInt().toString()
+                )
 
                 countdownText = when {
                     stateTimer < 1f -> "3"
@@ -187,7 +192,6 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                     val scrollSpeed = (speed / MAX_SPEED) * param2  // 固定値で見やすく
                     roadScrollOffset += scrollSpeed
                     roadScrollOffset %= lineSpacing
-                    //Log.d("GameView-test", "scrollSpeed=$scrollSpeed lineSpacing=$lineSpacing param=$param1")
                     return  // 他のロジックはスキップ
                 }
                 distance += speed / 60
@@ -322,7 +326,11 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                     gameState = GameState.GAME_OVER
                     stateTimer = 0f
                 }
-                statusUpdateListener?.invoke("TIME: %.1f   SPEED: ${speed.toInt()}km/h   DIST: %05d".format(time, distance.toInt()))
+                statusUpdateListener?.invoke(
+                    speed.toInt().toString(),
+                    time.toInt().toString(),
+                    distance.toInt().toString()
+                )
             }
 
             GameState.GAME_OVER -> {
@@ -343,7 +351,11 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                 if (stateTimer > 3f) {
                     // ここでボタン押下を待って START_READY に戻す
                 }
-                statusUpdateListener?.invoke("TIME: %.1f   SPEED: ${speed.toInt()}km/h   DIST: %05d".format(time, distance.toInt()))
+                statusUpdateListener?.invoke(
+                    speed.toInt().toString(),
+                    time.toInt().toString(),
+                    distance.toInt().toString()
+                )
                 return
             }
         }
@@ -387,13 +399,23 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
 
         if (gameState == GameState.GAME_OVER) {
             val paint = Paint().apply {
-                color = Color.RED
+                color = Color.WHITE
                 textSize = 120f
                 textAlign = Paint.Align.CENTER
                 isFakeBoldText = true
             }
-            canvas.drawText("GAME OVER", width / 2f, height / 2f, paint)
+            //canvas.drawText("GAME OVER", width / 2f, height / 2f, paint)
+            if (stateTimer < 3f) {
+                // 0.5秒ごとにON/OFF切り替え
+                if (((stateTimer * 2).toInt() % 2) == 0) {
+                    canvas.drawText("GAME OVER", width / 2f, height / 2f, paint)
+                }
+            } else {
+                // 常時表示
+                canvas.drawText("GAME OVER", width / 2f, height / 2f, paint)
+            }
         }
+
 
     }
 
@@ -788,7 +810,17 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         }
     }
 
-    fun setStatusUpdateListener(listener: (String) -> Unit) {
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (event.action == MotionEvent.ACTION_DOWN) {
+            if (gameState == GameState.GAME_OVER) {
+                restartGame()
+                return true
+            }
+        }
+        return super.onTouchEvent(event)
+    }
+
+    fun setStatusUpdateListener(listener: (String, String, String) -> Unit) {
         statusUpdateListener = listener
     }
 

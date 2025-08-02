@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
+import android.view.Gravity
 import android.view.KeyEvent
 import android.view.Menu
 import android.view.MenuItem
@@ -16,6 +17,8 @@ import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.widget.Button
 import android.widget.ImageButton
+import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AlertDialog
@@ -26,13 +29,16 @@ import androidx.core.view.WindowInsetsCompat
 
 class MainActivity : AppCompatActivity() {
     private lateinit var gameView: GameView
-    private lateinit var statusText: TextView
+    //private lateinit var statusText: TextView
+    private lateinit var statusContainer: LinearLayout
+    private val segMap = mutableMapOf<Char, Int>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         hideSystemUI()
         supportActionBar?.title = "Sekoiline"
         setContentView(R.layout.activity_main)
+        statusContainer = findViewById(R.id.statusContainer)
 
         // ステータスバーを隠す処理を安全に呼ぶ
         window.decorView.post {
@@ -48,18 +54,122 @@ class MainActivity : AppCompatActivity() {
         toolbar.overflowIcon?.setTint(Color.WHITE)
 
         gameView = findViewById(R.id.gameView)
-        statusText = findViewById(R.id.statusText)
 
-        setupButton(R.id.btn_accel) { gameView.onButtonPressed(GameInput.ACCELERATE) }
-        setupButton(R.id.btn_brake) { gameView.onButtonPressed(GameInput.BRAKE) }
-        setupButton(R.id.btn_left) { gameView.onButtonPressed(GameInput.LEFT) }
-        setupButton(R.id.btn_right) { gameView.onButtonPressed(GameInput.RIGHT) }
+        // 7セグ画像のリソース対応表
+        segMap['0'] = R.drawable.seg7_0
+        segMap['1'] = R.drawable.seg7_1
+        segMap['2'] = R.drawable.seg7_2
+        segMap['3'] = R.drawable.seg7_3
+        segMap['4'] = R.drawable.seg7_4
+        segMap['5'] = R.drawable.seg7_5
+        segMap['6'] = R.drawable.seg7_6
+        segMap['7'] = R.drawable.seg7_7
+        segMap['8'] = R.drawable.seg7_8
+        segMap['9'] = R.drawable.seg7_9
+        segMap[' '] = R.drawable.seg7_blank
 
-        // 状態表示の更新をGameViewに通知させる（必要に応じて）
-        gameView.setStatusUpdateListener { text ->
-            runOnUiThread { statusText.text = text }
+        // 上部表示のレイアウトを作成
+        setupStatusLayout()
+        // GameView から呼ばれる更新リスナーを設定
+        gameView.setStatusUpdateListener { speedStr, timeStr, scoreStr ->
+            update7Seg(speedStr, timeStr, scoreStr)
         }
 
+        //setupButton(R.id.btn_accel) { gameView.onButtonPressed(GameInput.ACCELERATE) }
+        //setupButton(R.id.btn_brake) { gameView.onButtonPressed(GameInput.BRAKE) }
+        setupButton(R.id.btn_left) { gameView.onButtonPressed(GameInput.LEFT) }
+        setupButton(R.id.btn_right) { gameView.onButtonPressed(GameInput.RIGHT) }
+    }
+
+    private lateinit var speedDigits: List<ImageView>
+    private lateinit var timeDigits: List<ImageView>
+    private lateinit var scoreDigits: List<ImageView>
+
+    private fun setupStatusLayout() {
+        statusContainer.removeAllViews()
+        statusContainer.orientation = LinearLayout.VERTICAL
+        statusContainer.gravity = Gravity.END
+
+        // TIME
+        val timeList = mutableListOf<ImageView>()
+        statusContainer.addView(createStatusRow("TIME [sec]", 3, timeList))
+        timeDigits = timeList
+
+        // SPEED
+        val spdList = mutableListOf<ImageView>()
+        statusContainer.addView(createStatusRow("SPEED [km]", 3, spdList))
+        speedDigits = spdList
+
+        // SCORE
+        val scoreList = mutableListOf<ImageView>()
+        statusContainer.addView(createStatusRow("SCORE", 4, scoreList))
+        scoreDigits = scoreList
+    }
+
+    private fun createStatusRow(
+        label: String,
+        digitCount: Int,
+        outDigits: MutableList<ImageView>
+    ): View {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            gravity = Gravity.BOTTOM
+        }
+
+        // ラベル
+        val labelView = TextView(this).apply {
+            text = label
+            setTextColor(Color.WHITE)
+            textSize = 24f
+            gravity = Gravity.BOTTOM
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        row.addView(labelView)
+
+        // 7seg
+        val rightLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+
+        val digits = createDigitViews(digitCount)
+        outDigits.addAll(digits)
+        digits.forEach { rightLayout.addView(it) }
+
+        row.addView(rightLayout)
+        return row
+    }
+
+    private fun createDigitViews(count: Int): List<ImageView> {
+        return List(count) {
+            ImageView(this).apply {
+                setImageResource(segMap[' ']!!) // 初期はブランク
+                layoutParams = LinearLayout.LayoutParams(100, 160) // サイズ調整
+            }
+        }
+    }
+
+    private fun update7Seg(speed: String, time: String, score: String) {
+        // SPEED
+        val sp = speed.padStart(3, ' ')
+        for (i in sp.indices) {
+            speedDigits[i].setImageResource(segMap[sp[i]]!!)
+        }
+        // TIME
+        val tm = time.padStart(3, ' ')
+        for (i in tm.indices) {
+            timeDigits[i].setImageResource(segMap[tm[i]]!!)
+        }
+        // SCORE
+        val sc = score.padStart(4, ' ')
+        for (i in sc.indices) {
+            scoreDigits[i].setImageResource(segMap[sc[i]]!!)
+        }
     }
 
     private fun setupButton(id: Int, action: () -> Unit) {
