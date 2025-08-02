@@ -37,11 +37,12 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
 
     private var time = 30.0f
     private var distance = 0f
+    private var score = 0f
     private var speed = 0f
     private val MAX_SPEED = 300f
     private val ACCELERATION = 0.5f      // 通常加速(km/h)
-    private val DECELERATION_COLLISION = 1.0f  // 衝突減速(km/h)
-    private val DECELERATION_EDGE = 0.7f       // 縁石減速(km/h)
+    private val DECELERATION_COLLISION = 3.0f  // 衝突減速(km/h)
+    private val DECELERATION_EDGE = 2.0f       // 縁石減速(km/h)
     private var isCollidingWithEnemy = 0
     private var isCollidingWithEdge = false
     private var easedSpeed = 1f
@@ -78,7 +79,12 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
     private var stateTimer = 0f
     private var countdownText = ""
 
+    private val LIMIT_TIME = 30f
+    private val EXTEND_TIME = 15f
+    private var extendTimer = 0f
+    private var isExtendActive = false
 
+    @Volatile var isPaused = false // ポーズ状態フラグ
 
     init {
         //Log.w("GameView", "init")
@@ -112,18 +118,31 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {}
 
+    fun pauseGame() {
+        isPaused = true
+    }
+
+    fun resumeGame() {
+        isPaused = false
+    }
+
     inner class GameThread : Thread() {
         var running = false
 
         override fun run() {
             while (running) {
-                val canvas = holder.lockCanvas()
-                if (canvas != null) {
-                    synchronized(holder) {
-                        update()
-                        drawGame(canvas)
+                if (!isPaused) {
+                    val canvas = holder.lockCanvas()
+                    if (canvas != null) {
+                        try {
+                            synchronized(holder) {
+                                update()
+                                drawGame(canvas)
+                            }
+                        } finally {
+                            holder.unlockCanvasAndPost(canvas)
+                        }
                     }
-                    holder.unlockCanvasAndPost(canvas)
                 }
 
                 try {
@@ -163,7 +182,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                 statusUpdateListener?.invoke(
                     speed.toInt().toString(),
                     time.toInt().toString(),
-                    distance.toInt().toString()
+                    score.toInt().toString()
                 )
 
                 countdownText = when {
@@ -195,9 +214,17 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                     return  // 他のロジックはスキップ
                 }
                 distance += speed / 60
+                score = distance / 10
                 time -= 1f / 60f
                 if (time <= 0f) time = 0f
 
+                // EXTEND表示タイマー進行
+                if (isExtendActive) {
+                    extendTimer += 1f / 60f
+                    if (extendTimer > 3f) { // 3秒経過で非表示
+                        isExtendActive = false
+                    }
+                }
 
                 val segment = courseManager.getCurrentSegment(distance)
                 // 現在のセグメントのカーブ値を取得（ターゲット値）
@@ -283,6 +310,10 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                         if (tunnelFadeProgress >= 1.0f) {
                             tunnelState = TunnelState.IN_TUNNEL
                             //Log.d("TunnelState", "状態遷移: ENTER_FADE_OUT → IN_TUNNEL")
+                            // トンネル突入でEXTEND
+                            time += EXTEND_TIME
+                            isExtendActive = true
+                            extendTimer = 0f
                         }
                     }
 
@@ -317,7 +348,9 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                 } else {
                     // 通常加速
                     if (speed < MAX_SPEED) {
-                        speed = minOf(MAX_SPEED, speed + ACCELERATION)
+                        val speedRatio = speed / MAX_SPEED
+                        val accelFactor = 2.0f - speedRatio
+                        speed = minOf(MAX_SPEED, speed + ACCELERATION * accelFactor)
                     }
                 }
 
@@ -329,7 +362,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                 statusUpdateListener?.invoke(
                     speed.toInt().toString(),
                     time.toInt().toString(),
-                    distance.toInt().toString()
+                    score.toInt().toString()
                 )
             }
 
@@ -354,7 +387,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                 statusUpdateListener?.invoke(
                     speed.toInt().toString(),
                     time.toInt().toString(),
-                    distance.toInt().toString()
+                    score.toInt().toString()
                 )
                 return
             }
@@ -416,6 +449,19 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
             }
         }
 
+        // EXTEND表示
+        if (isExtendActive) {
+            val paint = Paint().apply {
+                color = Color.WHITE
+                textSize = 80f
+                textAlign = Paint.Align.CENTER
+                isFakeBoldText = true
+            }
+            // 0.5秒間隔で点滅
+            if (((extendTimer * 2).toInt() % 2) == 0) {
+                canvas.drawText("EXTEND +${EXTEND_TIME.toInt()} sec", width / 2f, height / 3f, paint)
+            }
+        }
 
     }
 
@@ -427,7 +473,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         }
 
         // 変数リセット
-        time = 5f
+        time = LIMIT_TIME
         distance = 0f
         speed = 0f
         enemyCars.clear()
@@ -591,7 +637,9 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
 
 
     private fun spawnEnemyCar() {
-        if (speed < 100f) return
+        if (speed < 80f) return
+        if (tunnelState != TunnelState.NONE) return
+
         //Log.d("EnemyTest", "spawnEnemyCar() called")
         val lane = listOf(-0.6f, -0.3f, 0.0f, 0.3f, 0.6f).random() // ランダムに左・中央・右
         val speed = 2f + (0..5).random() * 0.2f // 少し速度差をつける

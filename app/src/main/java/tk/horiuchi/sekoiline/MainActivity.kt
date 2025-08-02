@@ -156,17 +156,19 @@ class MainActivity : AppCompatActivity() {
 
     private fun update7Seg(speed: String, time: String, score: String) {
         // SPEED
-        val sp = speed.padStart(3, ' ')
+        val sp = speed.padStart(3, ' ').takeLast(3)
         for (i in sp.indices) {
             speedDigits[i].setImageResource(segMap[sp[i]]!!)
         }
         // TIME
-        val tm = time.padStart(3, ' ')
+        val tm = time.padStart(3, ' ').takeLast(3)
         for (i in tm.indices) {
             timeDigits[i].setImageResource(segMap[tm[i]]!!)
         }
         // SCORE
-        val sc = score.padStart(4, ' ')
+        val scoreInt = score.toIntOrNull()?.coerceAtMost(9999) ?: 0
+        val scoreStr = scoreInt.toString()
+        val sc = scoreStr.padStart(4, ' ').takeLast(4)
         for (i in sc.indices) {
             scoreDigits[i].setImageResource(segMap[sc[i]]!!)
         }
@@ -212,8 +214,7 @@ class MainActivity : AppCompatActivity() {
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         return when (item.itemId) {
             R.id.action_about -> {
-                //gameView.pauseGame()
-                //gameView.forceStopCoffeeBreak()
+                gameView.pauseGame()
                 showAboutDialog()
                 true
             }
@@ -234,19 +235,18 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle(getString(R.string.about_title))
             .setMessage(getString(R.string.about_message))
-            //.setPositiveButton(getString(R.string.about_ok), null)
             .setPositiveButton(getString(R.string.about_ok)) { dialog, _ ->
                 dialog.dismiss()
-                //gameView.resumeGame()  // ★ ダイアログが閉じられたときにゲームを再開
+                gameView.resumeGame()  // ダイアログが閉じられたときにゲームを再開
             }
             .setNeutralButton(getString(R.string.about_hyperlink_name)) { _, _ ->
                 val url = getString(R.string.about_hyperlink)
                 val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
                 startActivity(intent)
-                //gameView.resumeGame()
+                gameView.resumeGame()
             }
             .setOnCancelListener {
-                //gameView.resumeGame()  // ★ 戻るボタンなどでもゲームを再開
+                gameView.resumeGame()  // 戻るボタンなどでもゲームを再開
             }
             .show()
     }
