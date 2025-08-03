@@ -34,6 +34,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
     private lateinit var carBitmaps: Map<SteeringState, Bitmap>
     private var backgroundBitmap: Bitmap? = null
     private var bgScrollX = 0f
+    private val backgroundCache = mutableMapOf<Int, Bitmap>()
 
     private var time = 30.0f
     private var distance = 0f
@@ -60,7 +61,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
 
     private var roadScrollOffset = 0f
 
-    private var enableEnemies = false    // デバッグ用に敵出現のON/OFF切り替え
+    private var enableEnemies = true    // デバッグ用に敵出現のON/OFF切り替え
     private val enemyCars = mutableListOf<EnemyCar>()
     private val enemyCarBitmap = BitmapFactory.decodeResource(resources, R.drawable.car_enemy)
     private val maxEnemyDepth = 14f  // 適宜調整可（例：距離200で画面奥に達する）
@@ -112,18 +113,6 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         drawThread.running = true
         drawThread.start()
         restartGame()
-
-        // スタートカウント
-        Thread {
-            Thread.sleep(400)
-            soundManager.playSound("start_beep1")
-            Thread.sleep(1000)
-            soundManager.playSound("start_beep1")
-            Thread.sleep(1000)
-            soundManager.playSound("start_beep1")
-            Thread.sleep(1000)
-            soundManager.playSound("start_beep2")
-        }.start()
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
@@ -145,8 +134,15 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         }
     }
 
+    private fun getBackground(resId: Int): Bitmap {
+        return backgroundCache.getOrPut(resId) {
+            BitmapFactory.decodeResource(resources, resId)
+        }
+    }
+
     inner class GameThread : Thread() {
         var running = false
+        private var frameCounter = 0
 
         override fun run() {
             while (running) {
@@ -155,8 +151,16 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                     if (canvas != null) {
                         try {
                             synchronized(holder) {
-                                update()
+
+                                val deltaTime = if (frameCounter % 2 == 0) {
+                                    // updateは30fps、deltaTimeは1/30秒相当
+                                    1f / 30f
+                                } else {
+                                    0f
+                                }
+                                update(deltaTime)
                                 drawGame(canvas)
+                                frameCounter++
                             }
                         } finally {
                             holder.unlockCanvasAndPost(canvas)
@@ -176,6 +180,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         maxShift = w * 0.3f
+        precomputeRoadLines()
     }
 
     enum class TunnelState {
@@ -194,18 +199,27 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
     private var lastBackgroundResId: Int = -1  // 直前の背景IDを保持
     //private var lastGameState: GameState? = null
     private var previousState: GameState? = null
-    private fun update() {
+    private fun update(deltaTime: Float) {
         // 前の状態を記録
         when (gameState) {
             GameState.START_READY -> {
+                if (stateTimer == 0f) {
+                    // スタート音再生（非同期）
+                    Thread {
+                        Thread.sleep(400)
+                        soundManager.playSound("start_beep1")
+                        Thread.sleep(1000)
+                        soundManager.playSound("start_beep1")
+                        Thread.sleep(1000)
+                        soundManager.playSound("start_beep1")
+                        Thread.sleep(1000)
+                        soundManager.playSound("start_beep2")
+                    }.start()
+                }
                 // スタート演出時間を進める
                 speed = 0f
-                stateTimer += 1f / 50f
-                statusUpdateListener?.invoke(
-                    speed.toInt().toString(),
-                    time.toInt().toString(),
-                    score.toInt().toString()
-                )
+                stateTimer += deltaTime * 1.2f // 少し早めに
+                updateStatusIfChanged()
 
                 countdownText = when {
                     stateTimer < 1f -> "3"
@@ -235,14 +249,14 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                     roadScrollOffset %= lineSpacing
                     return  // 他のロジックはスキップ
                 }
-                distance += speed / 60
+                distance += speed * deltaTime
                 score = distance / 10
-                time -= 1f / 60f
+                time -= deltaTime
                 if (time <= 0f) time = 0f
 
                 // EXTEND表示タイマー進行
                 if (isExtendActive) {
-                    extendTimer += 1f / 60f
+                    extendTimer += deltaTime
                     if (extendTimer > 3f) { // 3秒経過で非表示
                         isExtendActive = false
                     }
@@ -262,7 +276,6 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                 //Log.d("GameView", "distance = $distance, segment = $segment")
 
                 // スクロール速度 = speed に比例（適宜調整）
-                //val scrollSpeed = speed / param2  // 小さくするとゆっくり
                 val normalizedSpeed = speed / MAX_SPEED  // 0.0 ～ 1.0 に正規化
                 easedSpeed = sqrt(normalizedSpeed)  // 前半急激、後半なめらか
                 val scrollSpeed = easedSpeed * param2
@@ -274,8 +287,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                 // ★ 背景画像を必要に応じて更新
                 val bgResId = segment.background
                 if (bgResId != null && bgResId != lastBackgroundResId) {
-                    //Log.d("TunnelDebug", "背景切替: last=$lastBackgroundResId → new=$bgResId at distance=$distance")
-                    backgroundBitmap = BitmapFactory.decodeResource(resources, bgResId)
+                    backgroundBitmap = getBackground(bgResId)
                     lastBackgroundResId = bgResId
                 }
 
@@ -390,15 +402,11 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                     gameState = GameState.GAME_OVER
                     stateTimer = 0f
                 }
-                statusUpdateListener?.invoke(
-                    speed.toInt().toString(),
-                    time.toInt().toString(),
-                    score.toInt().toString()
-                )
+                updateStatusIfChanged()
             }
 
             GameState.GAME_OVER -> {
-                stateTimer += 1f / 60f
+                stateTimer += 1f / 30f
 
                 // ゆっくり減速
                 if (speed > 0f) {
@@ -412,28 +420,44 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                 invalidate()
 
                 // 3秒後に再スタート待ち
-                if (stateTimer > 3f) {
+                //if (stateTimer > 3f) {
                     // ここでボタン押下を待って START_READY に戻す
-                }
-                statusUpdateListener?.invoke(
-                    speed.toInt().toString(),
-                    time.toInt().toString(),
-                    score.toInt().toString()
-                )
+                //}
+                updateStatusIfChanged()
                 return
             }
         }
-        // ここで遷移検知してサウンド再生
-        if (previousState != gameState && gameState == GameState.PLAYING) {
-            soundManager.playEngine()
-        }
-        if (previousState != gameState && gameState == GameState.GAME_OVER) {
-            soundManager.stopEngine()
-            soundManager.playSound("gameover")
-        }
-        //lastGameState = gameState
-        previousState = gameState
 
+        if (previousState != gameState) {
+            when (gameState) {
+                GameState.START_READY -> {
+                }
+                GameState.PLAYING -> {
+                    soundManager.playEngine()
+                }
+                GameState.GAME_OVER -> {
+                    soundManager.stopEngine()
+                    soundManager.playSound("gameover")
+                }
+            }
+            previousState = gameState
+        }
+    }
+
+    private var lastSpeed = -1
+    private var lastTime = -1
+    private var lastScore = -1
+
+    private fun updateStatusIfChanged() {
+        val s = speed.toInt()
+        val t = time.toInt()
+        val sc = score.toInt()
+        if (s != lastSpeed || t != lastTime || sc != lastScore) {
+            lastSpeed = s
+            lastTime = t
+            lastScore = sc
+            statusUpdateListener?.invoke(s.toString(), t.toString(), sc.toString())
+        }
     }
 
     private var frameCount = 0
@@ -445,13 +469,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
 
         frameCount++
 
-        val bitmap = carBitmaps[steeringState] ?: return
-        val scale = 0.7f  // ここでサイズ倍率を指定（1.0 = 等倍）
-
-        val scaledWidth = (bitmap.width * scale).toInt()
-        val scaledHeight = (bitmap.height * scale).toInt()
-
-        val scaledBitmap = Bitmap.createScaledBitmap(bitmap, scaledWidth, scaledHeight, false)
+        val scaledBitmap = getScaledCarBitmap(steeringState)
 
         val centerX = width / 2
         val bottomY = height - 20
@@ -506,6 +524,24 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
 
     }
 
+    //private val scaledCarBitmaps = mutableMapOf<SteeringState, Bitmap>()
+
+    private fun getScaledCarBitmap(state: SteeringState): Bitmap {
+        val bmp = carBitmaps[state]!!
+
+        // 一番手前の道路幅（t=0）
+        val roadWidth = width * 0.95f // drawRoad() の計算と合わせる
+
+        // 道路幅の40%を自車幅にする（好みに応じて0.35〜0.45で調整可）
+        val desiredWidth = (roadWidth * 0.25f).toInt()
+
+        // アスペクト比を維持
+        val aspectRatio = bmp.height.toFloat() / bmp.width.toFloat()
+        val desiredHeight = (desiredWidth * aspectRatio).toInt()
+
+        return Bitmap.createScaledBitmap(bmp, desiredWidth, desiredHeight, false)
+    }
+
     fun restartGame() {
         // スレッドが動いてなければ再開
         if (!drawThread.running) {
@@ -522,103 +558,118 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         isCollidingWithEdge = false
         stateTimer = 0f
 
+        previousState = null
         gameState = GameState.START_READY
+
+        //forceDrawOnce()
     }
 
-    private fun drawBackground(canvas: Canvas) {
-        //Log.d("TunnelDebug", "drawBackground() called. tunnelState=$tunnelState")
-        //Log.d("TunnelDraw", "drawBackground called: tunnelState=$tunnelState fadeProgress=$tunnelFadeProgress")
-
-        if (tunnelState != TunnelState.IN_TUNNEL) {
-            backgroundBitmap?.let { bitmap ->
-                val bmpW = bitmap.width
-                val bmpH = bitmap.height
-
-                // 表示高さを指定（例：画面の上半分）
-                val destHeight = height / 2f
-                val aspectRatio = bmpW.toFloat() / bmpH.toFloat()
-                val destWidth = destHeight * aspectRatio
-
-                // 水平スクロール位置の計算（ループ対応）
-                val scrollX = ((bgScrollX % bmpW) + bmpW) % bmpW
-                val intScrollX = scrollX.toInt()
-
-                val bgPaint = Paint().apply {
-                    alpha = 255
-                    isFilterBitmap = true  // 拡大縮小時に滑らかに表示
+    private fun forceDrawOnce() {
+        val canvas = holder.lockCanvas()
+        if (canvas != null) {
+            try {
+                synchronized(holder) {
+                    drawGame(canvas) // 現在の状態を描画
                 }
-
-                var drawX = 0f
-                var srcX = intScrollX
-
-                while (drawX < width) {
-                    val remainingSrc = bmpW - srcX
-                    val drawSrcWidth = minOf(remainingSrc, bmpW)
-                    val drawDestWidth = destWidth * (drawSrcWidth.toFloat() / bmpW)
-
-                    val src = Rect(srcX, 0, srcX + drawSrcWidth, bmpH)
-                    val dst = RectF(
-                        drawX,
-                        0f,  // 上寄せする場合
-                        drawX + drawDestWidth,
-                        destHeight
-                    )
-                    canvas.drawBitmap(bitmap, src, dst, bgPaint)
-
-                    drawX += drawDestWidth
-                    srcX = 0
-                }
-            } ?: run {
-                // ここは保険
-                //Log.d("TunnelFade", "Background bitmap is NULL at progress=$tunnelFadeProgress")
-                //Log.d("TunnelDraw", "黒塗り実行(保険): alpha=$alpha (state=$tunnelState)")
-                paint.color = Color.BLACK
-                canvas.drawRect(0f, 0f, width.toFloat(), (height / 2).toFloat(), paint)
+            } finally {
+                holder.unlockCanvasAndPost(canvas)
             }
-
         }
-        // フェード演出またはトンネル内の黒塗り
+    }
+
+
+    private fun drawBackground(canvas: Canvas) {
+        val bitmap = backgroundBitmap ?: return
+        val bmpW = bitmap.width
+        val bmpH = bitmap.height
+
+        val destHeight = height / 2f
+        val aspectRatio = bmpW.toFloat() / bmpH.toFloat()
+        val destWidth = destHeight * aspectRatio
+
+        val bgPaint = Paint().apply {
+            isFilterBitmap = false
+        }
+
+        // カウントダウン中は背景固定
+        var offsetX = if (gameState == GameState.START_READY) 0f else bgScrollX
+
+        // 正負どちらも扱えるように補正
+        offsetX = ((offsetX % destWidth) + destWidth) % destWidth
+
+        val src = Rect(0, 0, bmpW, bmpH)
+
+        // 左側に余裕を持たせて 1枚目を描画
+        var drawX = -offsetX
+        canvas.drawBitmap(bitmap, src, RectF(drawX, 0f, drawX + destWidth, destHeight), bgPaint)
+
+        // 右側カバー用 2枚目
+        drawX += destWidth
+        canvas.drawBitmap(bitmap, src, RectF(drawX, 0f, drawX + destWidth, destHeight), bgPaint)
+
+        // 左カーブや大きい右カーブ用 3枚目
+        drawX -= destWidth * 2  // 左側にも1枚分余裕
+        if (drawX > -destWidth) {
+            canvas.drawBitmap(bitmap, src, RectF(drawX, 0f, drawX + destWidth, destHeight), bgPaint)
+        }
+
+        // トンネル演出
         if (tunnelState == TunnelState.ENTER_FADE_OUT ||
             tunnelState == TunnelState.EXIT_FADE_IN ||
             tunnelState == TunnelState.IN_TUNNEL) {
 
             val alpha = when (tunnelState) {
-                TunnelState.ENTER_FADE_OUT -> {
-                    val a = (tunnelFadeProgress * 255).toInt().coerceIn(0, 255)
-                    //Log.d("TunnelFade", "ENTER_FADE_OUT: progress=$tunnelFadeProgress alpha=$a bgResId=$lastBackgroundResId")
-                    a
-                }
-                TunnelState.EXIT_FADE_IN   -> {
-                    val a = ((1.0f - tunnelFadeProgress) * 255).toInt().coerceIn(0, 255)
-                    //val a = (tunnelFadeProgress * 255).toInt().coerceIn(0, 255)
-                    //Log.d("TunnelFade", "EXIT_FADE_IN: progress=$tunnelFadeProgress alpha=$a bgResId=$lastBackgroundResId")
-                    a
-                }
-                TunnelState.IN_TUNNEL      -> {
-                    //Log.d("TunnelFade", "IN_TUNNEL: alpha=255 bgResId=$lastBackgroundResId")
-                    255
-                } // 完全に黒で塗りつぶす
+                TunnelState.ENTER_FADE_OUT -> (tunnelFadeProgress * 255).toInt().coerceIn(0, 255)
+                TunnelState.EXIT_FADE_IN   -> ((1.0f - tunnelFadeProgress) * 255).toInt().coerceIn(0, 255)
+                TunnelState.IN_TUNNEL      -> 255
                 else -> 0
             }
-
-            //Log.d("TunnelDraw", "黒塗り実行: alpha=$alpha (state=$tunnelState)")
             paint.color = Color.argb(alpha, 0, 0, 0)
-            //Log.d("TunnelFade", "BLACK!: alpha=$alpha")
             canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
         }
-
     }
+
 
     private val paint = Paint().apply {
         isFilterBitmap = false
         isAntiAlias = false
     }
 
+    // 事前計算用
+    // 事前計算した道路ライン情報
+    private data class RoadLine(
+        val baseY: Float,    // 基準のY座標（スクロール基準）
+        val fixedY: Float,   // フチ用の固定Y座標（スクロールしない）
+        val roadWidth: Float,
+        val t: Float         // 0.0〜1.0 の奥行き比率
+    )
+
+    private val roadLines = mutableListOf<RoadLine>()
+    private var precomputedLineSpacing = 0f
+
+    private fun precomputeRoadLines() {
+        roadLines.clear()
+
+        val roadBottomY = height.toFloat()
+        precomputedLineSpacing = height / param1
+        val numLines = (height / precomputedLineSpacing / 2).toInt()
+
+        for (i in 0 until numLines) {
+            val t = i / numLines.toFloat()
+            val baseY = roadBottomY - i * precomputedLineSpacing
+            val fixedY = height - i * precomputedLineSpacing
+            val roadWidth = lerp(width * 0.95f, width * 0.2f, t)
+
+            roadLines.add(RoadLine(baseY, fixedY, roadWidth, t))
+        }
+    }
+
     private fun drawRoad(canvas: Canvas) {
-        if (tunnelState == TunnelState.IN_TUNNEL /*|| tunnelState == TunnelState.EXIT_FADE_IN*/) {
-            roadPaint.color = Color.rgb(40, 40, 40) // 暗いグレー
-            centerLinePaint.color = Color.rgb(100, 100, 0) // 暗い黄色
-            edgeLinePaint.color = Color.DKGRAY // 薄暗いグレー
+        // 道路の色設定
+        if (tunnelState == TunnelState.IN_TUNNEL) {
+            roadPaint.color = Color.rgb(40, 40, 40)
+            centerLinePaint.color = Color.rgb(100, 100, 0)
+            edgeLinePaint.color = Color.DKGRAY
         } else {
             roadPaint.color = Color.DKGRAY
             centerLinePaint.color = Color.YELLOW
@@ -626,34 +677,27 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         }
 
         val baseCenterX = width / 2f + roadShift
-        val roadBottomY = height.toFloat()
-        val lineSpacing = height / param1
-        val numLines = (height / lineSpacing / 2).toInt()
 
-        for (i in 0 until numLines) {
-            val t = i / numLines.toFloat()
-            val baseY = roadBottomY - i * lineSpacing + (roadScrollOffset % lineSpacing)
-            // フチ用の固定Y座標（スクロールしない）
-            val fixedY = height - i * lineSpacing
+        for (line in roadLines) {
+            // スクロール加算（元の baseY に roadScrollOffset を反映）
+            val baseY = line.baseY + (roadScrollOffset % precomputedLineSpacing)
 
-            val roadWidth = lerp(width * 0.95f, width * 0.2f, t)
-            val curveAmount = currentCurve * (t.pow(2)) * maxShift * 0.5f
-
-            val left = baseCenterX - roadWidth / 2 + curveAmount
-            val right = baseCenterX + roadWidth / 2 + curveAmount
+            // カーブ反映
+            val curveAmount = currentCurve * (line.t * line.t) * maxShift * 0.5f
+            val left = baseCenterX - line.roadWidth / 2 + curveAmount
+            val right = baseCenterX + line.roadWidth / 2 + curveAmount
             val mid = (left + right) / 2
 
+            // 道路本体
             canvas.drawLine(left, baseY, right, baseY, roadPaint)
 
-            val scale = 1f + (1f - t) * 1.5f
-            val lineLength = 6f * scale
-
-            val centerLineLength = lerp(20f, 4f, t)  // 可変（動きを出す）
-            val edgeLineLength = 14f                 // 固定（動かない）
+            // 中央線・縁石
+            val centerLineLength = lerp(20f, 4f, line.t)
+            val edgeLineLength = 14f
 
             canvas.drawLine(mid, baseY, mid, baseY + centerLineLength, centerLinePaint)
-            canvas.drawLine(left + 2, fixedY, left + 2, fixedY + edgeLineLength, edgeLinePaint)
-            canvas.drawLine(right - 2, fixedY, right - 2, fixedY + edgeLineLength, edgeLinePaint)
+            canvas.drawLine(left + 2, line.fixedY, left + 2, line.fixedY + edgeLineLength, edgeLinePaint)
+            canvas.drawLine(right - 2, line.fixedY, right - 2, line.fixedY + edgeLineLength, edgeLinePaint)
         }
     }
 
@@ -665,6 +709,8 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
     private fun lerp(start: Float, end: Float, t: Float): Float {
         return start + (end - start) * t
     }
+    inline fun fastLerp(a: Float, b: Float, t: Float) = a + (b - a) * t
+
 
     private fun updateSteeringInput() {
         val steeringSpeed = 0.1f // 1フレームごとの変化量（調整可）
@@ -676,13 +722,15 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         }
     }
 
-
+    private var nextLaneOffsets = floatArrayOf(-0.6f, -0.3f, 0.0f, 0.3f, 0.6f)
+    private val rng = java.util.Random()
     private fun spawnEnemyCar() {
         if (speed < 80f) return
         if (tunnelState != TunnelState.NONE) return
 
         //Log.d("EnemyTest", "spawnEnemyCar() called")
-        val lane = listOf(-0.6f, -0.3f, 0.0f, 0.3f, 0.6f).random() // ランダムに左・中央・右
+        //val lane = listOf(-0.6f, -0.3f, 0.0f, 0.3f, 0.6f).random() // ランダムに左・中央・右
+        val lane = nextLaneOffsets[rng.nextInt(nextLaneOffsets.size)]
         val speed = 2f + (0..5).random() * 0.2f // 少し速度差をつける
         val newCar = EnemyCar(
             distance = maxEnemyDepth,     // 奥に登場（仮
@@ -701,10 +749,12 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         val baseCenterX = width / 2f + roadShift
 
         for (enemy in enemyCars) {
+            if (enemy.distance > maxEnemyDepth || enemy.distance < -2f) continue
+
             val t = enemy.distance / maxEnemyDepth.toFloat() // 0〜1の範囲
             val baseY = roadBottomY - enemy.distance * lineSpacing
 
-            val roadWidth = lerp(width * 0.95f, width * 0.2f, t)
+            val roadWidth = fastLerp(width * 0.95f, width * 0.2f, t)
             val curveOffset = currentCurve * (t * t) * maxShift * 0.5f
             val roadLeft = baseCenterX - roadWidth / 2 + curveOffset
             val roadRight = baseCenterX + roadWidth / 2 + curveOffset
@@ -712,8 +762,8 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
             val laneCenter = (roadLeft + roadRight) / 2f + (roadWidth / 2f) * enemy.laneOffset
             enemy.laneCenter = laneCenter
 
-            val carWidth = lerp(220f, 32f, t)
-            val carHeight = lerp(220f, 32f, t)
+            val carWidth = fastLerp(220f, 32f, t)
+            val carHeight = fastLerp(220f, 32f, t)
             //Log.d("ScaleCheck", "t=$t, w=$carWidth, h=$carHeight")
 
             val left = laneCenter - carWidth / 2
@@ -730,15 +780,18 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
     private var enemyLaneChangeCounter = 0
     private var enemySpawnCooldown = 0
     private var nextEnemySpawnInterval = 60
+    private val removeList = ArrayList<EnemyCar>(10)
+    private val ENEMY_LANE_SMOOTHING = 0.02f
 
     private fun updateEnemyCars() {
         enemySpawnCooldown++
-        val toRemove = mutableListOf<EnemyCar>()
+        removeList.clear()
+        //val toRemove = mutableListOf<EnemyCar>()
 
         if (enableEnemies && enemySpawnCooldown >= nextEnemySpawnInterval) {
             spawnEnemyCar()
             enemySpawnCooldown = 0
-            nextEnemySpawnInterval = (30..180).random() // 次の出現までのフレーム数をランダムで設定（1〜2.5秒）
+            nextEnemySpawnInterval = (60..120).random() // 次の出現までのフレーム数をランダムで設定（1〜2.5秒）
         }
 
         // カウンター更新
@@ -752,8 +805,8 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
             }
 
             // 現在のlaneOffsetをtargetに滑らかに近づける
-            val smoothing = 0.02f
-            enemy.laneOffset += (enemy.targetLaneOffset - enemy.laneOffset) * smoothing
+            //val smoothing = 0.02f
+            enemy.laneOffset += (enemy.targetLaneOffset - enemy.laneOffset) * ENEMY_LANE_SMOOTHING
 
             // distanceを減らして接近させる
             // スピードがしきい値以下なら奥に逃げる
@@ -765,26 +818,30 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                     // 奥に行きすぎたら削除
                     if (enemy.distance >= maxEnemyDepth) {
                         enemy.distance = maxEnemyDepth
-                        toRemove.add(enemy)
+                        removeList.add(enemy)
                     }
                 } else {
                     // 通常の接近
                     enemy.distance -= 0.1f * easedSpeed
                     if (enemy.distance < -2f) {
-                        toRemove.add(enemy)
+                        removeList.add(enemy)
                     }
                 }
             }
         }
 
         // 削除対象の敵車を削除
-        enemyCars.removeAll(toRemove)
+        enemyCars.removeAll(removeList)
     }
 
     private fun checkCollisions() {
         val thresholdDistance = 2.5f  // 衝突判定のZ距離（手前すぎると間に合わないのでやや余裕）
+        val nearEnemies = enemyCars.filter { enemy ->
+            // 奥行きが近い敵だけ判定
+            enemy.distance in 0f..(thresholdDistance + 1f)
+        }
 
-        for (enemy in enemyCars) {
+        for (enemy in nearEnemies) {
             if (enemy.isStoppedDueToCollision) continue  // すでに衝突で止まってる
 
             val collisionZOffset = 2f
@@ -792,7 +849,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
             if (dz < 0f || dz > thresholdDistance) continue  // 範囲外の敵車は無視
 
             val t = dz / maxEnemyDepth
-            val carWidth = lerp(140f, 32f, t)
+            val carWidth = fastLerp(140f, 32f, t)
 
             val playerX = width / 2f  // 自車は常に画面中央に描画
             val enemyX = enemy.laneCenter   // drawEnemyCars() で使ってるのと同じ計算式をここでも使う
