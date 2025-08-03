@@ -97,7 +97,7 @@ class MainActivity : AppCompatActivity() {
 
         // SPEED
         val spdList = mutableListOf<ImageView>()
-        statusContainer.addView(createStatusRow("SPEED [km]", 3, spdList))
+        statusContainer.addView(createStatusRow("SPEED [km/h]", 3, spdList))
         speedDigits = spdList
 
         // SCORE

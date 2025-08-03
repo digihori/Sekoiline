@@ -60,7 +60,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
 
     private var roadScrollOffset = 0f
 
-    private var enableEnemies = true    // デバッグ用に敵出現のON/OFF切り替え
+    private var enableEnemies = false    // デバッグ用に敵出現のON/OFF切り替え
     private val enemyCars = mutableListOf<EnemyCar>()
     private val enemyCarBitmap = BitmapFactory.decodeResource(resources, R.drawable.car_enemy)
     private val maxEnemyDepth = 14f  // 適宜調整可（例：距離200で画面奥に達する）
@@ -84,6 +84,8 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
     private var extendTimer = 0f
     private var isExtendActive = false
 
+    private lateinit var soundManager: SoundManager
+
     @Volatile var isPaused = false // ポーズ状態フラグ
 
     init {
@@ -106,9 +108,22 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) {
+        soundManager = SoundManager(context)
         drawThread.running = true
         drawThread.start()
         restartGame()
+
+        // スタートカウント
+        Thread {
+            Thread.sleep(400)
+            soundManager.playSound("start_beep1")
+            Thread.sleep(1000)
+            soundManager.playSound("start_beep1")
+            Thread.sleep(1000)
+            soundManager.playSound("start_beep1")
+            Thread.sleep(1000)
+            soundManager.playSound("start_beep2")
+        }.start()
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
@@ -120,10 +135,14 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
 
     fun pauseGame() {
         isPaused = true
+        soundManager.stopEngine()
     }
 
     fun resumeGame() {
         isPaused = false
+        if (gameState != GameState.GAME_OVER) {
+            soundManager.playEngine()
+        }
     }
 
     inner class GameThread : Thread() {
@@ -173,12 +192,15 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
     private var param1 = 30f
     private var param2 = 8f
     private var lastBackgroundResId: Int = -1  // 直前の背景IDを保持
+    //private var lastGameState: GameState? = null
+    private var previousState: GameState? = null
     private fun update() {
+        // 前の状態を記録
         when (gameState) {
             GameState.START_READY -> {
                 // スタート演出時間を進める
                 speed = 0f
-                stateTimer += 1f / 60f
+                stateTimer += 1f / 50f
                 statusUpdateListener?.invoke(
                     speed.toInt().toString(),
                     time.toInt().toString(),
@@ -273,8 +295,12 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                 roadShift = roadShift.coerceIn(-maxShift, maxShift)
                 val touchingLeftCurb = roadShift <= -maxShift
                 val touchingRightCurb = roadShift >= maxShift
+                var previousCollisionWithWdge = isCollidingWithEdge
                 if (touchingLeftCurb || touchingRightCurb) {
                     isCollidingWithEdge = true  // 縁石に接触中
+                    if (previousCollisionWithWdge != isCollidingWithEdge) {
+                        soundManager.playSound("collision")
+                    }
                 } else {
                     isCollidingWithEdge = false
                 }
@@ -314,6 +340,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                             time += EXTEND_TIME
                             isExtendActive = true
                             extendTimer = 0f
+                            soundManager.playSound("extend")
                         }
                     }
 
@@ -340,6 +367,10 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                 }
                 invalidate()
 
+                if (gameState == GameState.PLAYING) {
+                    val speedRatio = speed / MAX_SPEED
+                    soundManager.setEnginePitch(speedRatio)
+                }
                 // 衝突 or 縁石接触時の減速
                 if (isCollidingWithEnemy > 0) {
                     speed = maxOf(0f, speed - DECELERATION_COLLISION)
@@ -392,6 +423,16 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                 return
             }
         }
+        // ここで遷移検知してサウンド再生
+        if (previousState != gameState && gameState == GameState.PLAYING) {
+            soundManager.playEngine()
+        }
+        if (previousState != gameState && gameState == GameState.GAME_OVER) {
+            soundManager.stopEngine()
+            soundManager.playSound("gameover")
+        }
+        //lastGameState = gameState
+        previousState = gameState
 
     }
 
@@ -405,7 +446,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         frameCount++
 
         val bitmap = carBitmaps[steeringState] ?: return
-        val scale = 1.5f  // ここでサイズ倍率を指定（1.0 = 等倍）
+        val scale = 0.7f  // ここでサイズ倍率を指定（1.0 = 等倍）
 
         val scaledWidth = (bitmap.width * scale).toInt()
         val scaledHeight = (bitmap.height * scale).toInt()
@@ -765,6 +806,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                 isCollidingWithEnemy++
                 enemy.carWidth = collisionMargin
                 Log.d("Collision", "enemy at distance=${enemy.distance} STOPPED due to collision")
+                soundManager.playSound("collision")
             }
         }
     }
@@ -796,6 +838,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         }
         when (input) {
             GameInput.LEFT -> {
+                val prevState = steeringState
                 steeringState = when (steeringState) {
                     SteeringState.RIGHT2 -> SteeringState.RIGHT1
                     SteeringState.RIGHT1 -> SteeringState.STRAIGHT
@@ -804,9 +847,13 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                     else -> SteeringState.LEFT2
                 }
                 //param2++
+                if (steeringState == SteeringState.LEFT2 && prevState != SteeringState.LEFT2) {
+                    soundManager.playSound("steer2")
+                }
             }
 
             GameInput.RIGHT -> {
+                val prevState = steeringState
                 steeringState = when (steeringState) {
                     SteeringState.LEFT2 -> SteeringState.LEFT1
                     SteeringState.LEFT1 -> SteeringState.STRAIGHT
@@ -815,6 +862,9 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                     else -> SteeringState.RIGHT2
                 }
                 //param2--
+                if (steeringState == SteeringState.RIGHT2 && prevState != SteeringState.RIGHT2) {
+                    soundManager.playSound("steer2")
+                }
             }
 
             GameInput.ACCELERATE -> {

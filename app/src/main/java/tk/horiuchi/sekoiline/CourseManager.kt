@@ -12,21 +12,27 @@ class CourseManager {
 
     init {
         // 仮のコース構成（田舎→都会→夜）
-        addSegment(1000, 0f, R.drawable.bg_country)   // 直線
-        addSegment(500,  2.0f, R.drawable.bg_country) // 緩い右カーブ
-        addSegment(500, -1.0f, R.drawable.bg_country) // 急な左カーブ
+        addSegment(1500, 0f, R.drawable.bg_country)
+        addSegment(1000,  1.0f, R.drawable.bg_country)
+        addSegment(800,  2.3f, R.drawable.bg_country)
+        addSegment(800, -2.0f, R.drawable.bg_country)
+        addSegment(600,  1.5f, R.drawable.bg_country)
+        addSegment(400, 0f, R.drawable.bg_country)
 
         addSegment(1000, 0f, null)      // トンネル
 
-        addSegment(1000, 0f, R.drawable.bg_city)      // 都会 直線
-        addSegment(500,  2.0f, R.drawable.bg_city)    // 急な右カーブ
-        addSegment(200, -0.3f, R.drawable.bg_city)    // 緩い左カーブ
+        addSegment(1000, 0f, R.drawable.bg_city)
+        addSegment(1000,  2.0f, R.drawable.bg_city)
+        addSegment(1000, -0.3f, R.drawable.bg_city)
+        addSegment(1500, -1.3f, R.drawable.bg_city)
 
         addSegment(1000, 0f, null)      // トンネル
 
-        addSegment(1000, 0f, R.drawable.bg_city_night)     // 夜
-        addSegment(200,  0.7f, R.drawable.bg_city_night)
-        addSegment(1000,  -2.0f, R.drawable.bg_city_night)
+        addSegment(500, 0f, R.drawable.bg_city_night)
+        addSegment(1000,  -0.7f, R.drawable.bg_city_night)
+        addSegment(1000,  -2.3f, R.drawable.bg_city_night)
+        addSegment(1000,  1.3f, R.drawable.bg_city_night)
+        addSegment(1000,  0.5f, R.drawable.bg_city_night)
 
         addSegment(1000, 0f, null)      // トンネル
     }
