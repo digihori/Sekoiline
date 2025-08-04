@@ -142,7 +142,6 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
 
     inner class GameThread : Thread() {
         var running = false
-        private var frameCounter = 0
 
         override fun run() {
             while (running) {
@@ -151,16 +150,9 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                     if (canvas != null) {
                         try {
                             synchronized(holder) {
-
-                                val deltaTime = if (frameCounter % 2 == 0) {
-                                    // updateは30fps、deltaTimeは1/30秒相当
-                                    1f / 30f
-                                } else {
-                                    0f
-                                }
+                                val deltaTime = 1f / 30f
                                 update(deltaTime)
                                 drawGame(canvas)
-                                frameCounter++
                             }
                         } finally {
                             holder.unlockCanvasAndPost(canvas)
@@ -169,7 +161,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                 }
 
                 try {
-                    sleep(16)
+                    sleep(33)
                 } catch (e: InterruptedException) {
                     e.printStackTrace()
                 }
@@ -244,7 +236,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                 if (roadTestMode) {
                     // 単純にスクロールだけ進める
                     val lineSpacing = height / param1
-                    val scrollSpeed = (speed / MAX_SPEED) * param2  // 固定値で見やすく
+                    val scrollSpeed = (speed / MAX_SPEED) * param2 * 2f // 固定値で見やすく
                     roadScrollOffset += scrollSpeed
                     roadScrollOffset %= lineSpacing
                     return  // 他のロジックはスキップ
@@ -278,7 +270,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                 // スクロール速度 = speed に比例（適宜調整）
                 val normalizedSpeed = speed / MAX_SPEED  // 0.0 ～ 1.0 に正規化
                 easedSpeed = sqrt(normalizedSpeed)  // 前半急激、後半なめらか
-                val scrollSpeed = easedSpeed * param2
+                val scrollSpeed = easedSpeed * param2 * 2f
                 //val scrollSpeed = (speed / MAX_SPEED) * param2  // 小さくするとゆっくり
                 roadScrollOffset += scrollSpeed
                 val lineSpacing = height / param1  // drawRoad でも同じ spacing を使用している前提
@@ -385,15 +377,15 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                 }
                 // 衝突 or 縁石接触時の減速
                 if (isCollidingWithEnemy > 0) {
-                    speed = maxOf(0f, speed - DECELERATION_COLLISION)
+                    speed = maxOf(0f, speed - DECELERATION_COLLISION * 2f)
                 } else if (isCollidingWithEdge) {
-                    speed = maxOf(0f, speed - DECELERATION_EDGE)
+                    speed = maxOf(0f, speed - DECELERATION_EDGE * 2f)
                 } else {
                     // 通常加速
                     if (speed < MAX_SPEED) {
                         val speedRatio = speed / MAX_SPEED
                         val accelFactor = 2.0f - speedRatio
-                        speed = minOf(MAX_SPEED, speed + ACCELERATION * accelFactor)
+                        speed = minOf(MAX_SPEED, speed + ACCELERATION * accelFactor * 2f)
                     }
                 }
 
@@ -791,12 +783,12 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         if (enableEnemies && enemySpawnCooldown >= nextEnemySpawnInterval) {
             spawnEnemyCar()
             enemySpawnCooldown = 0
-            nextEnemySpawnInterval = (60..120).random() // 次の出現までのフレーム数をランダムで設定（1〜2.5秒）
+            nextEnemySpawnInterval = (30..60).random() // 次の出現までのフレーム数をランダムで設定（1〜2.5秒）
         }
 
         // カウンター更新
         enemyLaneChangeCounter++
-        val shouldUpdateTarget = enemyLaneChangeCounter % 120 == 0  // 約1秒ごと（60フレーム）
+        val shouldUpdateTarget = enemyLaneChangeCounter % 60 == 0  // 約1秒ごと（60フレーム）
 
         for (enemy in enemyCars) {
             // ランダムに目標laneOffsetを更新（-0.9 〜 +0.9 の範囲）
@@ -814,7 +806,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
             val threshold = 0.5f
             if (!enemy.isStoppedDueToCollision) {
                 if (easedSpeed < threshold) {
-                    enemy.distance += 0.3f //* retreatSpeed
+                    enemy.distance += 0.3f * 2f //* retreatSpeed
                     // 奥に行きすぎたら削除
                     if (enemy.distance >= maxEnemyDepth) {
                         enemy.distance = maxEnemyDepth
@@ -822,7 +814,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                     }
                 } else {
                     // 通常の接近
-                    enemy.distance -= 0.1f * easedSpeed
+                    enemy.distance -= 0.1f * easedSpeed * 2f
                     if (enemy.distance < -2f) {
                         removeList.add(enemy)
                     }
