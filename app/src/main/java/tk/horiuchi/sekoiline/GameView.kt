@@ -142,15 +142,19 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
 
     inner class GameThread : Thread() {
         var running = false
+        private var lastTime = System.nanoTime() // 前フレームの時刻
 
         override fun run() {
             while (running) {
                 if (!isPaused) {
+                    val now = System.nanoTime()
+                    val deltaTime = (now - lastTime) / 1_000_000_000f // 秒に変換
+                    lastTime = now
                     val canvas = holder.lockCanvas()
                     if (canvas != null) {
                         try {
                             synchronized(holder) {
-                                val deltaTime = 1f / 30f
+                                //val deltaTime = 1f / 30f
                                 update(deltaTime)
                                 drawGame(canvas)
                             }
@@ -173,6 +177,9 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         super.onSizeChanged(w, h, oldw, oldh)
         maxShift = w * 0.3f
         precomputeRoadLines()
+
+        val segment = courseManager.getCurrentSegment(0f)
+        segment.background?.let { prepareBackground(it) }
     }
 
     enum class TunnelState {
@@ -192,6 +199,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
     //private var lastGameState: GameState? = null
     private var previousState: GameState? = null
     private fun update(deltaTime: Float) {
+        val tUpdateStart = System.nanoTime() // ★update計測開始
         // 前の状態を記録
         when (gameState) {
             GameState.START_READY -> {
@@ -278,8 +286,12 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
 
                 // ★ 背景画像を必要に応じて更新
                 val bgResId = segment.background
+                //if (bgResId != null && bgResId != lastBackgroundResId) {
+                //    backgroundBitmap = getBackground(bgResId)
+                //    lastBackgroundResId = bgResId
+                //}
                 if (bgResId != null && bgResId != lastBackgroundResId) {
-                    backgroundBitmap = getBackground(bgResId)
+                    prepareBackground(bgResId)  // 軽量化背景読み込み
                     lastBackgroundResId = bgResId
                 }
 
@@ -434,6 +446,9 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
             }
             previousState = gameState
         }
+
+        val elapsedUpdateMs = (System.nanoTime() - tUpdateStart) / 1_000_000.0
+        Log.d("PerfUpdate", String.format("update: %.3f ms", elapsedUpdateMs))
     }
 
     private var lastSpeed = -1
@@ -454,6 +469,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
 
     private var frameCount = 0
     private fun drawGame(canvas: Canvas) {
+        val tFrameStart = System.nanoTime() // ★フレーム開始時間
         canvas.drawColor(Color.BLACK)
         drawBackground(canvas)
         drawRoad(canvas)
@@ -514,6 +530,9 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
             }
         }
 
+        // ★描画終了 → 計測
+        val elapsedFrameMs = (System.nanoTime() - tFrameStart) / 1_000_000.0
+        Log.d("PerfFrame", String.format("drawGame total: %.3f ms", elapsedFrameMs))
     }
 
     //private val scaledCarBitmaps = mutableMapOf<SteeringState, Bitmap>()
@@ -570,40 +589,54 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
     }
 
 
-    private fun drawBackground(canvas: Canvas) {
-        val bitmap = backgroundBitmap ?: return
-        val bmpW = bitmap.width
-        val bmpH = bitmap.height
+    // 事前縮小済み背景
+    private var scaledBackgroundBitmap: Bitmap? = null
+    private val bgPaint = Paint().apply { isFilterBitmap = false }
+    private val bgSrcRect = Rect()
+    private val bgDstRect = RectF()
 
+    // 背景準備（事前縮小）
+    private fun prepareBackground(resId: Int) {
+        val original = BitmapFactory.decodeResource(resources, resId)
+
+        // 表示する高さ（画面の半分）
         val destHeight = height / 2f
-        val aspectRatio = bmpW.toFloat() / bmpH.toFloat()
-        val destWidth = destHeight * aspectRatio
+        val aspectRatio = original.width.toFloat() / original.height.toFloat()
+        val destWidth = (destHeight * aspectRatio).toInt()
 
-        val bgPaint = Paint().apply {
-            isFilterBitmap = false
-        }
+        // 縮小（スケーリングは一度だけ）
+        scaledBackgroundBitmap = Bitmap.createScaledBitmap(original, destWidth, destHeight.toInt(), false)
 
-        // カウントダウン中は背景固定
+        // 元ビットマップ解放
+        original.recycle()
+
+        // ソース矩形（全域）
+        bgSrcRect.set(0, 0, scaledBackgroundBitmap!!.width, scaledBackgroundBitmap!!.height)
+    }
+
+    // 背景描画（軽量化版＋処理時間ログ）
+    private fun drawBackground(canvas: Canvas) {
+        val tStart = System.nanoTime()
+
+        val bitmap = scaledBackgroundBitmap ?: return
+        val destWidth = bitmap.width.toFloat()
+        val destHeight = bitmap.height.toFloat()
+
+        // カウントダウン中はスクロール固定
         var offsetX = if (gameState == GameState.START_READY) 0f else bgScrollX
-
-        // 正負どちらも扱えるように補正
         offsetX = ((offsetX % destWidth) + destWidth) % destWidth
 
-        val src = Rect(0, 0, bmpW, bmpH)
+        // 中央
+        bgDstRect.set(-offsetX, 0f, -offsetX + destWidth, destHeight)
+        canvas.drawBitmap(bitmap, bgSrcRect, bgDstRect, bgPaint)
 
-        // 左側に余裕を持たせて 1枚目を描画
-        var drawX = -offsetX
-        canvas.drawBitmap(bitmap, src, RectF(drawX, 0f, drawX + destWidth, destHeight), bgPaint)
+        // 右側
+        bgDstRect.set(-offsetX + destWidth, 0f, -offsetX + destWidth * 2, destHeight)
+        canvas.drawBitmap(bitmap, bgSrcRect, bgDstRect, bgPaint)
 
-        // 右側カバー用 2枚目
-        drawX += destWidth
-        canvas.drawBitmap(bitmap, src, RectF(drawX, 0f, drawX + destWidth, destHeight), bgPaint)
-
-        // 左カーブや大きい右カーブ用 3枚目
-        drawX -= destWidth * 2  // 左側にも1枚分余裕
-        if (drawX > -destWidth) {
-            canvas.drawBitmap(bitmap, src, RectF(drawX, 0f, drawX + destWidth, destHeight), bgPaint)
-        }
+        // 左側（予備）
+        bgDstRect.set(-offsetX - destWidth, 0f, -offsetX, destHeight)
+        canvas.drawBitmap(bitmap, bgSrcRect, bgDstRect, bgPaint)
 
         // トンネル演出
         if (tunnelState == TunnelState.ENTER_FADE_OUT ||
@@ -619,6 +652,10 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
             paint.color = Color.argb(alpha, 0, 0, 0)
             canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
         }
+
+        // 計測ログ出力
+        val elapsedMs = (System.nanoTime() - tStart) / 1_000_000.0
+        Log.d("PerfBG", String.format("drawBackground: %.3f ms", elapsedMs))
     }
 
 
@@ -627,18 +664,20 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         isAntiAlias = false
     }
 
-    // 事前計算用
-    // 事前計算した道路ライン情報
+    // RoadLine の構造体を拡張
     private data class RoadLine(
-        val baseY: Float,    // 基準のY座標（スクロール基準）
-        val fixedY: Float,   // フチ用の固定Y座標（スクロールしない）
-        val roadWidth: Float,
-        val t: Float         // 0.0〜1.0 の奥行き比率
+        val baseY: Float,         // スクロール基準Y
+        val fixedY: Float,        // 縁石固定Y
+        val roadWidth: Float,     // 道路幅
+        val t: Float,             // 奥行き比率
+        val centerLineLength: Float, // 中央線長（キャッシュ）
+        val edgeLineLength: Float    // 縁石長（キャッシュ）
     )
 
     private val roadLines = mutableListOf<RoadLine>()
     private var precomputedLineSpacing = 0f
 
+    // precomputeRoadLines() 修正版
     private fun precomputeRoadLines() {
         roadLines.clear()
 
@@ -652,11 +691,20 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
             val fixedY = height - i * precomputedLineSpacing
             val roadWidth = lerp(width * 0.95f, width * 0.2f, t)
 
-            roadLines.add(RoadLine(baseY, fixedY, roadWidth, t))
+            // ここで固定値を事前計算
+            val centerLineLength = lerp(20f, 4f, t)
+            val edgeLineLength = 14f // 固定なら直接値でも可
+
+            roadLines.add(
+                RoadLine(baseY, fixedY, roadWidth, t, centerLineLength, edgeLineLength)
+            )
         }
     }
 
+    // 軽量化 drawRoad()
     private fun drawRoad(canvas: Canvas) {
+        val tStart = System.nanoTime()
+
         // 道路の色設定
         if (tunnelState == TunnelState.IN_TUNNEL) {
             roadPaint.color = Color.rgb(40, 40, 40)
@@ -669,12 +717,13 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         }
 
         val baseCenterX = width / 2f + roadShift
+        val scrollOffset = roadScrollOffset % precomputedLineSpacing
 
         for (line in roadLines) {
-            // スクロール加算（元の baseY に roadScrollOffset を反映）
-            val baseY = line.baseY + (roadScrollOffset % precomputedLineSpacing)
+            // スクロール反映
+            val baseY = line.baseY + scrollOffset
 
-            // カーブ反映
+            // カーブ補正のみ計算
             val curveAmount = currentCurve * (line.t * line.t) * maxShift * 0.5f
             val left = baseCenterX - line.roadWidth / 2 + curveAmount
             val right = baseCenterX + line.roadWidth / 2 + curveAmount
@@ -683,14 +732,16 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
             // 道路本体
             canvas.drawLine(left, baseY, right, baseY, roadPaint)
 
-            // 中央線・縁石
-            val centerLineLength = lerp(20f, 4f, line.t)
-            val edgeLineLength = 14f
+            // 中央線
+            canvas.drawLine(mid, baseY, mid, baseY + line.centerLineLength, centerLinePaint)
 
-            canvas.drawLine(mid, baseY, mid, baseY + centerLineLength, centerLinePaint)
-            canvas.drawLine(left + 2, line.fixedY, left + 2, line.fixedY + edgeLineLength, edgeLinePaint)
-            canvas.drawLine(right - 2, line.fixedY, right - 2, line.fixedY + edgeLineLength, edgeLinePaint)
+            // 縁石
+            canvas.drawLine(left + 2, line.fixedY, left + 2, line.fixedY + line.edgeLineLength, edgeLinePaint)
+            canvas.drawLine(right - 2, line.fixedY, right - 2, line.fixedY + line.edgeLineLength, edgeLinePaint)
         }
+
+        val elapsedMs = (System.nanoTime() - tStart) / 1_000_000.0
+        Log.d("PerfRoad", String.format("drawRoad: %.3f ms", elapsedMs))
     }
 
 
@@ -734,6 +785,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
     }
 
     private fun drawEnemyCars(canvas: Canvas) {
+        val tStart = System.nanoTime()
         //Log.d("EnemyTest", "drawEnemyCar() called")
         val roadBottomY = height.toFloat()
         val lineSpacing = height / param1
@@ -767,6 +819,8 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
             //Log.d("EnemyTest", "drawEnemyCar() draw!")
             canvas.drawBitmap(enemyCarBitmap, null, RectF(left, top, right, bottom), enemyPaint)
         }
+        val elapsedMs = (System.nanoTime() - tStart) / 1_000_000.0
+        Log.d("PerfEnemy", String.format("drawEnemyCars: %.3f ms", elapsedMs))
     }
 
     private var enemyLaneChangeCounter = 0
