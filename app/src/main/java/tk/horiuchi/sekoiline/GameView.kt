@@ -143,18 +143,19 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
     inner class GameThread : Thread() {
         var running = false
         private var lastTime = System.nanoTime() // 前フレームの時刻
+        private val targetFrameTime = 1_000_000_000L / 30L // 30fps → 約33,333,333ns
 
         override fun run() {
             while (running) {
                 if (!isPaused) {
-                    val now = System.nanoTime()
-                    val deltaTime = (now - lastTime) / 1_000_000_000f // 秒に変換
-                    lastTime = now
+                    val frameStart = System.nanoTime()
+                    val deltaTime = (frameStart - lastTime) / 1_000_000_000f // 秒
+                    lastTime = frameStart
+
                     val canvas = holder.lockCanvas()
                     if (canvas != null) {
                         try {
                             synchronized(holder) {
-                                //val deltaTime = 1f / 30f
                                 update(deltaTime)
                                 drawGame(canvas)
                             }
@@ -162,12 +163,18 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                             holder.unlockCanvasAndPost(canvas)
                         }
                     }
-                }
+                    // 経過時間を測定して動的にスリープ
+                    val frameEnd = System.nanoTime()
+                    val elapsedNs = frameEnd - frameStart
+                    val sleepNs = targetFrameTime - elapsedNs
 
-                try {
-                    sleep(33)
-                } catch (e: InterruptedException) {
-                    e.printStackTrace()
+                    if (sleepNs > 0) {
+                        try {
+                            sleep(sleepNs / 1_000_000L)
+                        } catch (e: InterruptedException) {
+                            e.printStackTrace()
+                        }
+                    }
                 }
             }
         }
@@ -198,25 +205,45 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
     private var lastBackgroundResId: Int = -1  // 直前の背景IDを保持
     //private var lastGameState: GameState? = null
     private var previousState: GameState? = null
-    private var frameCounter = 0
+    //private var frameCounter = 0
+    private var startSoundPlayed = false
     private fun update(deltaTime: Float) {
+        //Log.d("ThreadCheck", "GameThread id=${Thread.currentThread().id}")
         val tUpdateStart = System.nanoTime() // ★update計測開始
+        //Log.d("StateChange", "previousState=$previousState -> gameState=$gameState")
+        if (previousState != gameState) {
+            when (gameState) {
+                GameState.START_READY -> {
+                    if (!startSoundPlayed) {
+                        startSoundPlayed = true
+                        Log.d("StartSound", "Start Sound Play!!!")
+                        Thread {
+                            Thread.sleep(200)
+                            soundManager.playSound("start_beep1")
+                            Thread.sleep(1000)
+                            soundManager.playSound("start_beep1")
+                            Thread.sleep(1000)
+                            soundManager.playSound("start_beep1")
+                            Thread.sleep(1000)
+                            soundManager.playSound("start_beep2")
+                        }.start()
+                    }
+                }
+                GameState.PLAYING -> {
+                    soundManager.playEngine()
+                }
+                GameState.GAME_OVER -> {
+                    startSoundPlayed = false
+                    soundManager.stopEngine()
+                    soundManager.playSound("gameover")
+                }
+            }
+            previousState = gameState
+        }
+
         // 前の状態を記録
         when (gameState) {
             GameState.START_READY -> {
-                if (stateTimer == 0f) {
-                    // スタート音再生（非同期）
-                    Thread {
-                        Thread.sleep(200)
-                        soundManager.playSound("start_beep1")
-                        Thread.sleep(1000)
-                        soundManager.playSound("start_beep1")
-                        Thread.sleep(1000)
-                        soundManager.playSound("start_beep1")
-                        Thread.sleep(1000)
-                        soundManager.playSound("start_beep2")
-                    }.start()
-                }
                 // スタート演出時間を進める
                 speed = 0f
                 stateTimer += deltaTime * 0.9f// 少し早めに
@@ -326,11 +353,11 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                 }
 
                 steeringInput = when (steeringState) {
-                    SteeringState.LEFT2 -> -6.0f
-                    SteeringState.LEFT1 -> -2.0f
+                    SteeringState.LEFT2 -> -7.0f
+                    SteeringState.LEFT1 -> -3.0f
                     SteeringState.STRAIGHT -> 0.0f
-                    SteeringState.RIGHT1 -> 2.0f
-                    SteeringState.RIGHT2 -> 6.0f
+                    SteeringState.RIGHT1 -> 3.0f
+                    SteeringState.RIGHT2 -> 7.0f
                 }
                 updateSteeringInput()
 
@@ -432,20 +459,6 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
             }
         }
 
-        if (previousState != gameState) {
-            when (gameState) {
-                GameState.START_READY -> {
-                }
-                GameState.PLAYING -> {
-                    soundManager.playEngine()
-                }
-                GameState.GAME_OVER -> {
-                    soundManager.stopEngine()
-                    soundManager.playSound("gameover")
-                }
-            }
-            previousState = gameState
-        }
 
         frameCount++
         val elapsedUpdateMs = (System.nanoTime() - tUpdateStart) / 1_000_000.0
@@ -533,7 +546,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
 
         // ★描画終了 → 計測
         val elapsedFrameMs = (System.nanoTime() - tFrameStart) / 1_000_000.0
-        Log.d("PerfFrame", String.format("drawGame total: %.3f ms", elapsedFrameMs))
+        //Log.d("PerfFrame", String.format("drawGame total: %.3f ms", elapsedFrameMs))
     }
 
     //private val scaledCarBitmaps = mutableMapOf<SteeringState, Bitmap>()
@@ -555,13 +568,37 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
     }
 
     fun restartGame() {
-        // スレッドが動いてなければ再開
+        //Log.d("restartGame", "restartGame Called!!!")
+        // スレッドが止まってたら再開
         if (!drawThread.running) {
             drawThread.running = true
             drawThread.start()
         }
 
-        // 変数リセット
+        // スクロール・カーブ系のリセット
+        bgScrollX = 0f
+        bgScrollSpeed = 0f
+        roadScrollOffset = 0f
+        roadShift = 0f
+        currentCurve = 0f
+        steeringState = SteeringState.STRAIGHT
+        steeringInput = 0f
+        targetSteering = 0f
+
+        // 背景の再準備（初期セグメントを読み込み）
+        val initialSegment = courseManager.getCurrentSegment(0f)
+        lastBackgroundResId = -1
+        initialSegment.background?.let {
+            prepareMergedBackground(it)
+            lastBackgroundResId = it
+        }
+
+        // 敵車をクリア
+        enemyCars.clear()
+        isCollidingWithEnemy = 0
+        isCollidingWithEdge = false
+
+        // ゲーム進行用変数リセット
         time = LIMIT_TIME
         distance = 0f
         speed = 0f
@@ -569,11 +606,36 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         isCollidingWithEnemy = 0
         isCollidingWithEdge = false
         stateTimer = 0f
+        score = 0f
 
+        // トンネル関連リセット
+        tunnelState = TunnelState.NONE
+        tunnelFadeProgress = 0f
+        isExtendActive = false
+        extendTimer = 0f
+
+        // 前回状態リセット
         previousState = null
         gameState = GameState.START_READY
+        //startSoundPlayed = false
 
+        // 初回描画を強制
+        forceDrawOnce()
     }
+
+    private fun forceDrawOnce() {
+        val canvas = holder.lockCanvas()
+        if (canvas != null) {
+            try {
+                synchronized(holder) {
+                    drawGame(canvas) // 現在の状態を描画
+                }
+            } finally {
+                holder.unlockCanvasAndPost(canvas)
+            }
+        }
+    }
+
 
     private var mergedBackground: Bitmap? = null
     private var mergedWidth = 0
@@ -643,7 +705,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         }
 
         val elapsedMs = (System.nanoTime() - tStart) / 1_000_000.0
-        Log.d("PerfBG", String.format("drawBackground: %.3f ms", elapsedMs))
+        //Log.d("PerfBG", String.format("drawBackground: %.3f ms", elapsedMs))
     }
 
 
@@ -729,7 +791,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         }
 
         val elapsedMs = (System.nanoTime() - tStart) / 1_000_000.0
-        Log.d("PerfRoad", String.format("drawRoad: %.3f ms", elapsedMs))
+        //Log.d("PerfRoad", String.format("drawRoad: %.3f ms", elapsedMs))
     }
 
 
@@ -780,7 +842,8 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         val numLines = (height / lineSpacing / 2).toInt()
         val baseCenterX = width / 2f + roadShift
 
-        for (enemy in enemyCars) {
+        val snapshot = enemyCars.toList()
+        for (enemy in snapshot) {
             if (enemy.distance > maxEnemyDepth || enemy.distance < -2f) continue
 
             val t = enemy.distance / maxEnemyDepth.toFloat() // 0〜1の範囲
@@ -808,7 +871,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
             canvas.drawBitmap(enemyCarBitmap, null, RectF(left, top, right, bottom), enemyPaint)
         }
         val elapsedMs = (System.nanoTime() - tStart) / 1_000_000.0
-        Log.d("PerfEnemy", String.format("drawEnemyCars: %.3f ms", elapsedMs))
+        //Log.d("PerfEnemy", String.format("drawEnemyCars: %.3f ms", elapsedMs))
     }
 
     private var enemyLaneChangeCounter = 0
@@ -889,7 +952,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
             val enemyX = enemy.laneCenter   // drawEnemyCars() で使ってるのと同じ計算式をここでも使う
 
             val dx = enemyX - playerX
-            val collisionMargin = carWidth * 0.9f  // 少し小さめのマージン
+            val collisionMargin = carWidth * 0.8f  // 少し小さめのマージン
 
             if (abs(dx) < collisionMargin) {
                 // 衝突判定成功！
