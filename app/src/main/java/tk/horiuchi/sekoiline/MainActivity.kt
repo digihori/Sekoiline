@@ -251,4 +251,14 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    override fun onPause() {
+        super.onPause()
+        gameView.pauseGame() // 動きを止める
+    }
+
+    override fun onResume() {
+        super.onResume()
+        gameView.resumeGame() // 必要なら再開
+    }
+
 }

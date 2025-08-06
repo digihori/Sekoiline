@@ -29,7 +29,7 @@ data class EnemyCar(
 
 class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, attrs), SurfaceHolder.Callback {
 
-    private val drawThread = GameThread()
+    private var drawThread = GameThread()
     private var statusUpdateListener: ((String, String, String) -> Unit)? = null
     private lateinit var carBitmaps: Map<SteeringState, Bitmap>
     private var backgroundBitmap: Bitmap? = null
@@ -108,11 +108,16 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         }
     }
 
+    private var isFirstLaunch = true
     override fun surfaceCreated(holder: SurfaceHolder) {
         soundManager = SoundManager(context)
-        drawThread.running = true
-        drawThread.start()
-        restartGame()
+        resumeGame()
+        //drawThread.running = true
+        //drawThread.start()
+        if (isFirstLaunch) {
+            isFirstLaunch = false
+            restartGame()
+        }
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
@@ -129,16 +134,27 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
 
     fun resumeGame() {
         isPaused = false
-        if (gameState != GameState.GAME_OVER) {
-            soundManager.playEngine()
+        // スレッドが死んでいたら再生成
+        if (!drawThread.isAlive) {
+            drawThread = GameThread().apply {
+                running = true
+                start()
+            }
+        }
+        //if (!drawThread.running) {
+        //    drawThread.running = true
+        //    drawThread.start()
+        //}
+        if (::soundManager.isInitialized && gameState != GameState.GAME_OVER) {
+            soundManager?.playEngine()
         }
     }
 
-    private fun getBackground(resId: Int): Bitmap {
-        return backgroundCache.getOrPut(resId) {
-            BitmapFactory.decodeResource(resources, resId)
-        }
-    }
+    //private fun getBackground(resId: Int): Bitmap {
+    //    return backgroundCache.getOrPut(resId) {
+    //        BitmapFactory.decodeResource(resources, resId)
+    //    }
+    //}
 
     inner class GameThread : Thread() {
         var running = false
@@ -412,7 +428,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                         //Log.d("TunnelState", "状態遷移: DONE → NONE")
                     }
                 }
-                invalidate()
+                //invalidate()
 
                 if (gameState == GameState.PLAYING) {
                     val speedRatio = speed / MAX_SPEED
@@ -452,7 +468,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                 bgScrollSpeed = 0f
 
                 // 画面フェードやGAME OVER文字は drawGame() 側で描画
-                invalidate()
+                //invalidate()
 
                 updateStatusIfChanged()
                 return
