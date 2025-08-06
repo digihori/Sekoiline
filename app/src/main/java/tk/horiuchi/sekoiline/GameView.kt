@@ -179,7 +179,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         precomputeRoadLines()
 
         val segment = courseManager.getCurrentSegment(0f)
-        segment.background?.let { prepareBackground(it) }
+        segment.background?.let { prepareMergedBackground(it) }
     }
 
     enum class TunnelState {
@@ -198,6 +198,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
     private var lastBackgroundResId: Int = -1  // 直前の背景IDを保持
     //private var lastGameState: GameState? = null
     private var previousState: GameState? = null
+    private var frameCounter = 0
     private fun update(deltaTime: Float) {
         val tUpdateStart = System.nanoTime() // ★update計測開始
         // 前の状態を記録
@@ -206,7 +207,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                 if (stateTimer == 0f) {
                     // スタート音再生（非同期）
                     Thread {
-                        Thread.sleep(400)
+                        Thread.sleep(200)
                         soundManager.playSound("start_beep1")
                         Thread.sleep(1000)
                         soundManager.playSound("start_beep1")
@@ -218,7 +219,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                 }
                 // スタート演出時間を進める
                 speed = 0f
-                stateTimer += deltaTime * 1.2f // 少し早めに
+                stateTimer += deltaTime * 0.9f// 少し早めに
                 updateStatusIfChanged()
 
                 countdownText = when {
@@ -286,25 +287,28 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
 
                 // ★ 背景画像を必要に応じて更新
                 val bgResId = segment.background
-                //if (bgResId != null && bgResId != lastBackgroundResId) {
-                //    backgroundBitmap = getBackground(bgResId)
-                //    lastBackgroundResId = bgResId
-                //}
                 if (bgResId != null && bgResId != lastBackgroundResId) {
-                    prepareBackground(bgResId)  // 軽量化背景読み込み
+                    prepareMergedBackground(bgResId)  // 軽量化背景読み込み
                     lastBackgroundResId = bgResId
                 }
 
                 // 背景のスクロール速度も、コースカーブとステアリングの差に応じて変化
-                if (speed >= 60) {
-                    bgScrollSpeed = currentCurve * oversteerFactor * 5f
-                    bgScrollX += bgScrollSpeed
-                    backgroundBitmap?.let {
-                        if (bgScrollX < 0) bgScrollX += it.width
-                        if (bgScrollX >= it.width) bgScrollX -= it.width
+                if (frameCount % 2 == 0) { // 更新頻度を1/2にする
+                    if (speed >= 60) {
+                        bgScrollSpeed = currentCurve * oversteerFactor * 5f
+
+                        // 合成済み背景の1枚幅（3分割の1枚分）
+                        val singleWidth = mergedWidth / 3
+
+                        // スクロールオフセット更新
+                        bgOffsetX += bgScrollSpeed.toInt()
+
+                        // 剰余演算の代わりに条件分岐でループ
+                        if (bgOffsetX < 0) bgOffsetX += singleWidth
+                        if (bgOffsetX >= singleWidth) bgOffsetX -= singleWidth
+                    } else {
+                        bgScrollSpeed = 0f
                     }
-                } else {
-                    bgScrollSpeed = 0f
                 }
 
                 roadShift += (currentCurve * oversteerFactor - steeringInput) * 2f
@@ -322,11 +326,11 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                 }
 
                 steeringInput = when (steeringState) {
-                    SteeringState.LEFT2 -> -4.0f
+                    SteeringState.LEFT2 -> -6.0f
                     SteeringState.LEFT1 -> -2.0f
                     SteeringState.STRAIGHT -> 0.0f
                     SteeringState.RIGHT1 -> 2.0f
-                    SteeringState.RIGHT2 -> 4.0f
+                    SteeringState.RIGHT2 -> 6.0f
                 }
                 updateSteeringInput()
 
@@ -412,9 +416,9 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
             GameState.GAME_OVER -> {
                 stateTimer += 1f / 30f
 
-                // ゆっくり減速
+                // 減速
                 if (speed > 0f) {
-                    speed = maxOf(0f, speed - 2f)
+                    speed = maxOf(0f, speed - 8f)
                 }
 
                 // 背景スクロール停止
@@ -423,10 +427,6 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                 // 画面フェードやGAME OVER文字は drawGame() 側で描画
                 invalidate()
 
-                // 3秒後に再スタート待ち
-                //if (stateTimer > 3f) {
-                    // ここでボタン押下を待って START_READY に戻す
-                //}
                 updateStatusIfChanged()
                 return
             }
@@ -447,6 +447,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
             previousState = gameState
         }
 
+        frameCount++
         val elapsedUpdateMs = (System.nanoTime() - tUpdateStart) / 1_000_000.0
         Log.d("PerfUpdate", String.format("update: %.3f ms", elapsedUpdateMs))
     }
@@ -572,70 +573,58 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         previousState = null
         gameState = GameState.START_READY
 
-        //forceDrawOnce()
     }
 
-    private fun forceDrawOnce() {
-        val canvas = holder.lockCanvas()
-        if (canvas != null) {
-            try {
-                synchronized(holder) {
-                    drawGame(canvas) // 現在の状態を描画
-                }
-            } finally {
-                holder.unlockCanvasAndPost(canvas)
-            }
+    private var mergedBackground: Bitmap? = null
+    private var mergedWidth = 0
+    private var mergedHeight = 0
+
+    private fun prepareMergedBackground(resId: Int) {
+        val opts = BitmapFactory.Options().apply {
+            inPreferredConfig = Bitmap.Config.RGB_565
         }
-    }
+        val original = BitmapFactory.decodeResource(resources, resId, opts)
 
-
-    // 事前縮小済み背景
-    private var scaledBackgroundBitmap: Bitmap? = null
-    private val bgPaint = Paint().apply { isFilterBitmap = false }
-    private val bgSrcRect = Rect()
-    private val bgDstRect = RectF()
-
-    // 背景準備（事前縮小）
-    private fun prepareBackground(resId: Int) {
-        val original = BitmapFactory.decodeResource(resources, resId)
-
-        // 表示する高さ（画面の半分）
+        // 表示高さ（画面の半分）
         val destHeight = height / 2f
         val aspectRatio = original.width.toFloat() / original.height.toFloat()
         val destWidth = (destHeight * aspectRatio).toInt()
 
-        // 縮小（スケーリングは一度だけ）
-        scaledBackgroundBitmap = Bitmap.createScaledBitmap(original, destWidth, destHeight.toInt(), false)
-
-        // 元ビットマップ解放
+        // 縮小1枚
+        val scaled = Bitmap.createScaledBitmap(original, destWidth, destHeight.toInt(), false)
         original.recycle()
 
-        // ソース矩形（全域）
-        bgSrcRect.set(0, 0, scaledBackgroundBitmap!!.width, scaledBackgroundBitmap!!.height)
+        // 横3枚をまとめたビットマップを生成
+        mergedWidth = destWidth * 3
+        mergedHeight = destHeight.toInt()
+        mergedBackground = Bitmap.createBitmap(mergedWidth, mergedHeight, Bitmap.Config.RGB_565)
+
+        val canvas = Canvas(mergedBackground!!)
+        for (i in 0 until 3) {
+            canvas.drawBitmap(scaled, (i * destWidth).toFloat(), 0f, null)
+        }
+        scaled.recycle()
     }
 
-    // 背景描画（軽量化版＋処理時間ログ）
+    private val bgPaint = Paint().apply { isFilterBitmap = false }
+    private val bgSrcRect = Rect()
+    private val bgDstRect = RectF()
+    private var bgOffsetX = 0
+
     private fun drawBackground(canvas: Canvas) {
         val tStart = System.nanoTime()
 
-        val bitmap = scaledBackgroundBitmap ?: return
-        val destWidth = bitmap.width.toFloat()
-        val destHeight = bitmap.height.toFloat()
+        val bitmap = mergedBackground ?: return
 
-        // カウントダウン中はスクロール固定
-        var offsetX = if (gameState == GameState.START_READY) 0f else bgScrollX
-        offsetX = ((offsetX % destWidth) + destWidth) % destWidth
+        // オフセット計算（剰余を使わない）
+        bgOffsetX += bgScrollSpeed.toInt()
+        if (bgOffsetX < 0) bgOffsetX += mergedWidth / 3
+        if (bgOffsetX >= mergedWidth / 3) bgOffsetX -= mergedWidth / 3
 
-        // 中央
-        bgDstRect.set(-offsetX, 0f, -offsetX + destWidth, destHeight)
-        canvas.drawBitmap(bitmap, bgSrcRect, bgDstRect, bgPaint)
-
-        // 右側
-        bgDstRect.set(-offsetX + destWidth, 0f, -offsetX + destWidth * 2, destHeight)
-        canvas.drawBitmap(bitmap, bgSrcRect, bgDstRect, bgPaint)
-
-        // 左側（予備）
-        bgDstRect.set(-offsetX - destWidth, 0f, -offsetX, destHeight)
+        // 1回の転送だけで描画
+        val singleWidth = mergedWidth / 3
+        bgSrcRect.set(bgOffsetX, 0, bgOffsetX + singleWidth, mergedHeight)
+        bgDstRect.set(0f, 0f, width.toFloat(), mergedHeight.toFloat())
         canvas.drawBitmap(bitmap, bgSrcRect, bgDstRect, bgPaint)
 
         // トンネル演出
@@ -653,7 +642,6 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
             canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
         }
 
-        // 計測ログ出力
         val elapsedMs = (System.nanoTime() - tStart) / 1_000_000.0
         Log.d("PerfBG", String.format("drawBackground: %.3f ms", elapsedMs))
     }
