@@ -1,6 +1,6 @@
 <resources>
-    <string name="app_name">セコイライン</string>
-    <string name="about_title">Sekoiline</string>
+    <string name="app_name">Sekoiline</string>
+    <string name="about_title">走れ！セコイライン</string>
     <string name="about_message">
         このゲームは1985年に流行った「走れ！スカイライン」のパロディで、Androidスマホ向けに再現しています。\n
         特徴\n

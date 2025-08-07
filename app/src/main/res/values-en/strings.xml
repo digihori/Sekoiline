@@ -1,14 +1,14 @@
 <resources>
     <string name="app_name">Sekoiline</string>
 
-    <string name="about_title">Sekoiline</string>
+    <string name="about_title">Run! Sekoiline</string>
     <string name="about_message">
-        This game is a parody of the 1985 hit “Run! Skyline” and has been recreated for Android smartphones. \n
-        Features \n
-        - Compete to see how far you can go within the time limit while maneuvering around enemy cars. \n
-        - Clearing a stage takes you into a tunnel where the time limit is extended\n
-        - Your car's speed is automatic\n
-        - Colliding with enemy cars or course barriers slows you down\n
+        This game is a parody of the 1985 hit “Run! Skyline” and has been recreated for Android smartphones.\n
+        Features\n
+        - Compete to see how far you can go within the time limit while maneuvering around enemy cars.\n
+        - Clearing a stage takes you into a tunnel where the time limit is extended.\n
+        - Your cars speed is automatic.\n
+        - Colliding with enemy cars or course barriers slows you down.\n
         - Game pad compatible\n
         - Sound effects included\n
     </string>
