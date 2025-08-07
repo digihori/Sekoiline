@@ -2,17 +2,14 @@ package tk.horiuchi.sekoiline
 
 import android.content.Context
 import android.media.AudioAttributes
-import android.media.MediaPlayer
 import android.media.SoundPool
-import android.os.Build
+import android.util.Log
 
 class SoundManager(context: Context) {
 
     private val soundPool: SoundPool
     private val soundMap = mutableMapOf<String, Int>()
     private val myContext: Context
-
-    //private var enginePlayer: MediaPlayer? = null
 
     lateinit var soundPoolEngine: SoundPool
     var engineSoundId = 0
@@ -38,15 +35,10 @@ class SoundManager(context: Context) {
         soundMap["extend"] = soundPool.load(context, R.raw.se_extend, 1)
         soundMap["gameover"] = soundPool.load(context, R.raw.bgm_gameover, 1)
 
-        // エンジン音 MediaPlayer
-        //enginePlayer = MediaPlayer.create(context, R.raw.se_engine_loop).apply {
-        //    isLooping = true
-        //    setVolume(1.5f, 1.5f)
-        //}
         initSound(context)
     }
 
-    fun playSound(name: String, volume: Float = 1.0f) {
+    fun playSound(name: String, volume: Float = 0.8f) {
         soundMap[name]?.let {
             soundPool.play(it, volume, volume, 1, 0, 1.0f)
         }
@@ -60,18 +52,45 @@ class SoundManager(context: Context) {
         engineSoundId = soundPoolEngine.load(context, R.raw.se_engine_loop, 1)
     }
 
+    private var isEngineRunning = false
+    private var isInBackground = false
     fun playEngine() {
-        // ループ再生（-1で無限ループ）
-        engineStreamId = soundPoolEngine.play(engineSoundId, 1f, 1f, 1, -1, 1f)
+        //Log.d("SoundManager", "playEngine called")
+        if (!isEngineRunning && !isInBackground) {
+            if (engineStreamId == 0) {
+                engineStreamId = soundPoolEngine.play(engineSoundId, 1f, 1f, 1, -1, 1f)
+                //Log.d("SoundManager", "played  Id=${engineStreamId}")
+            }
+            if (engineStreamId != 0) {
+                isEngineRunning = true
+            }
+        }
     }
 
     fun setEnginePitch(pitch: Float) {
-        // pitch: 0.5f〜2.0f の範囲で設定
-        soundPoolEngine.setRate(engineStreamId, pitch.coerceIn(0.3f, 2.0f))
+        if (engineStreamId != 0) {
+            // pitch: 0.5f〜2.0f の範囲で設定
+            soundPoolEngine.setRate(engineStreamId, pitch.coerceIn(0.3f, 2.0f))
+        }
     }
 
     fun stopEngine() {
-        soundPoolEngine.stop(engineStreamId)
+        //Log.d("SoundManager", "stopEngine called")
+        if (engineStreamId != 0) {
+            //Log.d("SoundManager", "stoped")
+            soundPoolEngine.stop(engineStreamId)
+            engineStreamId = 0
+        }
+        isEngineRunning = false
+    }
+
+    fun onAppBackground() {
+        isInBackground = true
+        stopEngine()
+    }
+
+    fun onAppForeground() {
+        isInBackground = false
     }
 
     fun release() {

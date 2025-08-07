@@ -3,17 +3,14 @@
 
     <string name="about_title">Sekoiline</string>
     <string name="about_message">
-        This game is a recreation of the 1970s electronic game “Skyline” for Android smartphones. \n
-        It is quite rearranged (^^) \n
-        Features\n
-        - The game is played on a grid-like field, and the player must guide the aliens and bury them in the holes to repel them.\n
-        - The player can dig and fill holes in the direction the player is facing.\n
-        - The directionality of the aliens towards the player increases as the stage progresses.\n
-        - There is a limit of two holes.\n
-        - Alien moves faster after a certain amount of time.\n
-        - 7-segment score display\n
-        - Gamepad support\n
-        - Sound effects are available.\n
+        This game is a parody of the 1985 hit “Run! Skyline” and has been recreated for Android smartphones. \n
+        Features \n
+        - Compete to see how far you can go within the time limit while maneuvering around enemy cars. \n
+        - Clearing a stage takes you into a tunnel where the time limit is extended\n
+        - Your car's speed is automatic\n
+        - Colliding with enemy cars or course barriers slows you down\n
+        - Game pad compatible\n
+        - Sound effects included\n
     </string>
     <string name="about_ok">OK</string>
     <string name="about_hyperlink_name">Privacy Policy</string>

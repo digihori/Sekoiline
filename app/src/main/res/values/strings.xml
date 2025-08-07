@@ -2,17 +2,14 @@
     <string name="app_name">セコイライン</string>
     <string name="about_title">Sekoiline</string>
     <string name="about_message">
-        This game is a recreation of the 1970s electronic game “Skyline” for Android smartphones. \n
-        It is quite rearranged (^^) \n
-        Features\n
-        - The game is played on a grid-like field, and the player must guide the aliens and bury them in the holes to repel them.\n
-        - The player can dig and fill holes in the direction the player is facing.\n
-        - The directionality of the aliens towards the player increases as the stage progresses.\n
-        - There is a limit of two holes.\n
-        - Alien moves faster after a certain amount of time.\n
-        - 7-segment score display\n
-        - Gamepad support\n
-        - Sound effects are available.\n
+        このゲームは1985年に流行った「走れ！スカイライン」のパロディで、Androidスマホ向けに再現しています。\n
+        特徴\n
+        - ステアリングを操作しながら敵車をかわし制限時間内にどこまで行けるか競います\n
+        - ステージクリアするとトンネルに入り制限時間が加算されます\n
+        - 自車のスピードは自動です\n
+        - 敵車やコースの縁石に接触するとスピードダウンします\n
+        - ゲームパッド対応\n
+        - 効果音あり\n
     </string>
     <string name="about_ok">OK</string>
     <string name="about_hyperlink_name">Privacy Policy</string>

@@ -9,7 +9,6 @@ import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import kotlin.math.abs
-import kotlin.math.pow
 import kotlin.math.sqrt
 
 enum class SteeringState {
@@ -34,7 +33,6 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
     private lateinit var carBitmaps: Map<SteeringState, Bitmap>
     private var backgroundBitmap: Bitmap? = null
     private var bgScrollX = 0f
-    private val backgroundCache = mutableMapOf<Int, Bitmap>()
 
     private var time = 30.0f
     private var distance = 0f
@@ -112,8 +110,6 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
     override fun surfaceCreated(holder: SurfaceHolder) {
         soundManager = SoundManager(context)
         resumeGame()
-        //drawThread.running = true
-        //drawThread.start()
         if (isFirstLaunch) {
             isFirstLaunch = false
             restartGame()
@@ -129,7 +125,9 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
 
     fun pauseGame() {
         isPaused = true
-        soundManager.stopEngine()
+        if (::soundManager.isInitialized) {
+            soundManager.onAppBackground()
+        }
     }
 
     fun resumeGame() {
@@ -141,20 +139,10 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                 start()
             }
         }
-        //if (!drawThread.running) {
-        //    drawThread.running = true
-        //    drawThread.start()
-        //}
-        if (::soundManager.isInitialized && gameState != GameState.GAME_OVER) {
-            soundManager?.playEngine()
+        if (::soundManager.isInitialized) {
+            soundManager.onAppForeground()
         }
     }
-
-    //private fun getBackground(resId: Int): Bitmap {
-    //    return backgroundCache.getOrPut(resId) {
-    //        BitmapFactory.decodeResource(resources, resId)
-    //    }
-    //}
 
     inner class GameThread : Thread() {
         var running = false
@@ -219,9 +207,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
     private var param1 = 30f
     private var param2 = 8f
     private var lastBackgroundResId: Int = -1  // 直前の背景IDを保持
-    //private var lastGameState: GameState? = null
     private var previousState: GameState? = null
-    //private var frameCounter = 0
     private var startSoundPlayed = false
     private fun update(deltaTime: Float) {
         //Log.d("ThreadCheck", "GameThread id=${Thread.currentThread().id}")
@@ -232,7 +218,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                 GameState.START_READY -> {
                     if (!startSoundPlayed) {
                         startSoundPlayed = true
-                        Log.d("StartSound", "Start Sound Play!!!")
+                        //Log.d("StartSound", "Start Sound Play!!!")
                         Thread {
                             Thread.sleep(200)
                             soundManager.playSound("start_beep1")
@@ -246,7 +232,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                     }
                 }
                 GameState.PLAYING -> {
-                    soundManager.playEngine()
+                    //soundManager.playEngine()
                 }
                 GameState.GAME_OVER -> {
                     startSoundPlayed = false
@@ -284,6 +270,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
             }
 
             GameState.PLAYING -> {
+                soundManager.playEngine()
                 // ここに既存の update() の内容を移動（元の処理）
                 if (roadTestMode) {
                     // 単純にスクロールだけ進める
@@ -475,7 +462,6 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
             }
         }
 
-
         frameCount++
         val elapsedUpdateMs = (System.nanoTime() - tUpdateStart) / 1_000_000.0
         Log.d("PerfUpdate", String.format("update: %.3f ms", elapsedUpdateMs))
@@ -484,7 +470,6 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
     private var lastSpeed = -1
     private var lastTime = -1
     private var lastScore = -1
-
     private fun updateStatusIfChanged() {
         val s = speed.toInt()
         val t = time.toInt()
@@ -564,8 +549,6 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         val elapsedFrameMs = (System.nanoTime() - tFrameStart) / 1_000_000.0
         //Log.d("PerfFrame", String.format("drawGame total: %.3f ms", elapsedFrameMs))
     }
-
-    //private val scaledCarBitmaps = mutableMapOf<SteeringState, Bitmap>()
 
     private fun getScaledCarBitmap(state: SteeringState): Bitmap {
         val bmp = carBitmaps[state]!!
@@ -678,7 +661,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         mergedBackground = Bitmap.createBitmap(mergedWidth, mergedHeight, Bitmap.Config.RGB_565)
 
         val canvas = Canvas(mergedBackground!!)
-        for (i in 0 until 3) {
+        for (i in 0 until 4) {
             canvas.drawBitmap(scaled, (i * destWidth).toFloat(), 0f, null)
         }
         scaled.recycle()

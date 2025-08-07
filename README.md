@@ -1,18 +1,15 @@
-# Heiankyo Alien
+# Run! Sekoiline
 [Click here for Japanese](./README.ja.md)
 
-This game is a reproduction of the 1970s electronic game “Heiankyo Alien” for Android smartphones.
-It is quite rearranged (^^) 
+This game is a parody of the 1985 hit “Run! Skyline” and has been recreated for Android smartphones. \n
 
 ## Features
-- The game is played on a grid-like field, and the player must guide the aliens and bury them in the holes to repel them.
-- The player can dig and fill holes in the direction the player is facing.
-- The directionality of the aliens towards the player increases as the stage progresses.
-- There is a limit of two holes.
-- Alien moves faster after a certain amount of time.
-- 7-segment score display
-- Gamepad support
-- Sound effects are available.
+- Compete to see how far you can go within the time limit while maneuvering around enemy cars.
+- Clearing a stage takes you into a tunnel where the time limit is extended
+- Your car's speed is automatic
+- Colliding with enemy cars or course barriers slows you down
+- Game pad compatible
+- Sound effects included
 
 ## Requirements
 Android 8.0 or higher
