@@ -237,7 +237,8 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                 GameState.GAME_OVER -> {
                     startSoundPlayed = false
                     soundManager.stopEngine()
-                    soundManager.playSound("gameover")
+                    soundManager.playGameOver()
+                    //soundManager.playSound("gameover")
                 }
             }
             previousState = gameState
@@ -323,6 +324,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                 }
 
                 // 背景のスクロール速度も、コースカーブとステアリングの差に応じて変化
+                //Log.d("BackGroundDebug", "frameCount=${frameCount}")
                 if (frameCount % 2 == 0) { // 更新頻度を1/2にする
                     if (speed >= 60) {
                         bgScrollSpeed = currentCurve * oversteerFactor * 5f
@@ -339,6 +341,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
                     } else {
                         bgScrollSpeed = 0f
                     }
+                    //Log.d("BackGroundDebug", "speed=${speed}, bgScrollSpeed=${bgScrollSpeed}, bgOffsetX=${bgOffsetX}")
                 }
 
                 roadShift += (currentCurve * oversteerFactor - steeringInput) * 2f
@@ -490,7 +493,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
         drawRoad(canvas)
         drawEnemyCars(canvas)
 
-        frameCount++
+        //frameCount++ このカウンタはupdate()でカウントアップしている
 
         val scaledBitmap = getScaledCarBitmap(steeringState)
 
@@ -573,6 +576,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
             drawThread.running = true
             drawThread.start()
         }
+        soundManager.stopGameOver()
 
         // スクロール・カーブ系のリセット
         bgScrollX = 0f

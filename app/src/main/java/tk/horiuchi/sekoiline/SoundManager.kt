@@ -10,6 +10,8 @@ class SoundManager(context: Context) {
     private val soundPool: SoundPool
     private val soundMap = mutableMapOf<String, Int>()
     private val myContext: Context
+    private var gameOverStreamId: Int? = null
+
 
     lateinit var soundPoolEngine: SoundPool
     var engineSoundId = 0
@@ -43,6 +45,21 @@ class SoundManager(context: Context) {
             soundPool.play(it, volume, volume, 1, 0, 1.0f)
         }
     }
+
+    fun playGameOver(volume: Float = 0.8f) {
+        stopGameOver() // すでに鳴ってたら止める
+        soundMap["gameover"]?.let { sid ->
+            gameOverStreamId = soundPool.play(sid, volume, volume, /*priority*/1, /*loop*/0, /*rate*/1.0f)
+        }
+    }
+
+    fun stopGameOver() {
+        gameOverStreamId?.let { streamId ->
+            soundPool.stop(streamId)
+        }
+        gameOverStreamId = null
+    }
+
 
     fun initSound(context: Context) {
         soundPoolEngine = SoundPool.Builder()
@@ -87,6 +104,7 @@ class SoundManager(context: Context) {
     fun onAppBackground() {
         isInBackground = true
         stopEngine()
+        stopGameOver()
     }
 
     fun onAppForeground() {
